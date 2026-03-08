@@ -35,7 +35,36 @@ This directory contains Docker configuration files for deploying the Streamer He
 - Docker Compose 2.0+
 - At least 4GB RAM available for containers
 
-## Quick Start
+## Quick Start (One-Line Deploy)
+
+**For users - deploy with pre-built images:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
+```
+
+That's it! The script will download the compose file and start all services.
+
+---
+
+## Developer Guide
+
+### Build & Push Images
+
+```bash
+# Build and push all images to Docker Hub
+./build-and-push.sh v1.0.0
+
+# Or just push latest
+./build-and-push.sh
+```
+
+Images will be pushed to:
+- `docker.io/streamerhelper/backend:latest`
+- `docker.io/streamerhelper/frontend:latest`
+- `docker.io/streamerhelper/nginx:latest`
+
+### Local Development
 
 1. **Copy environment file**
    ```bash
@@ -48,9 +77,9 @@ This directory contains Docker configuration files for deploying the Streamer He
    ```
    Update passwords and secrets for production use.
 
-3. **Start all services**
+3. **Start all services (with local build)**
    ```bash
-   docker compose up -d
+   docker compose up -d --build
    ```
 
 4. **Check service status**
