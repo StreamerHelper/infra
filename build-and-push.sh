@@ -7,7 +7,7 @@ set -e
 
 VERSION=${1:-latest}
 REGISTRY=${DOCKER_REGISTRY:-docker.io}
-ORG=streamerhelper
+ORG=umuoy1
 
 echo "=== Building and pushing images with tag: $VERSION ==="
 echo "Registry: $REGISTRY/$ORG"

@@ -60,9 +60,9 @@ That's it! The script will download the compose file and start all services.
 ```
 
 Images will be pushed to:
-- `docker.io/streamerhelper/backend:latest`
-- `docker.io/streamerhelper/frontend:latest`
-- `docker.io/streamerhelper/nginx:latest`
+- `docker.io/umuoy1/backend:latest`
+- `docker.io/umuoy1/frontend:latest`
+- `docker.io/umuoy1/nginx:latest`
 
 ### Local Development
 
