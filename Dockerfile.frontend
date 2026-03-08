@@ -1,0 +1,44 @@
+# Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* ./
+
+# Install pnpm and dependencies
+RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY . .
+
+# Set environment variables for build
+ENV NEXT_PUBLIC_API_URL=/api
+ENV NODE_ENV=production
+
+# Build Next.js application (standalone output)
+RUN pnpm run build
+
+# Production stage
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Set environment to production
+ENV NODE_ENV=production
+
+# Copy standalone output from builder
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Start application
+CMD ["node", "server.js"]
