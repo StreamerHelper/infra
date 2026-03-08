@@ -14,7 +14,8 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Set environment variables for build
-ENV NEXT_PUBLIC_API_URL=/api
+# API paths already include /api prefix in code, so baseURL should be empty
+ENV NEXT_PUBLIC_API_URL=
 ENV NODE_ENV=production
 
 # Build Next.js application (standalone output)
