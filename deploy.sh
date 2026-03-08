@@ -18,10 +18,26 @@ curl -fsSL $COMPOSE_URL -o $COMPOSE_FILE
 
 # Create env file if not exists
 if [ ! -f "$ENV_FILE" ]; then
+    echo ""
+    echo ">>> Configuration"
+    echo ""
+
+    # Prompt for APP_KEYS
+    echo "Enter APP_KEYS (a secret string for session encryption)."
+    echo "Press Enter to use default (not recommended for production):"
+    read -p "APP_KEYS: " APP_KEYS_INPUT
+
+    # Use default if empty
+    if [ -z "$APP_KEYS_INPUT" ]; then
+        APP_KEYS_INPUT="streamer-helper-default-secret-key-please-change-in-production"
+        echo "Using default APP_KEYS"
+    fi
+
+    echo ""
     echo ">>> Creating environment file..."
     cat > $ENV_FILE << EOF
 # Generated at $(date)
-# Optional: Customize these values as needed
+APP_KEYS=$APP_KEYS_INPUT
 
 # Ports
 HTTP_PORT=80
