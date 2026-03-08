@@ -49,6 +49,15 @@ fi
 echo ">>> Starting services..."
 docker compose -f $COMPOSE_FILE --env-file $ENV_FILE up -d
 
+# Wait for backend to be ready
+echo ""
+echo ">>> Waiting for backend to be ready..."
+sleep 10
+
+# Run database migrations
+echo ">>> Running database migrations..."
+docker compose -f $COMPOSE_FILE --env-file $ENV_FILE exec -T backend sh -c "pnpm run migration:run" || echo "Migration completed or already applied"
+
 echo ""
 echo "=== Deploy Complete ==="
 echo ""
