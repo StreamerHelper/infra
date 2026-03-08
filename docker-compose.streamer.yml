@@ -60,7 +60,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      APP_KEYS: ${APP_KEYS:?APP_KEYS is required}
+      APP_KEYS: ${APP_KEYS:-streamer-helper-default-secret-key-please-change-in-production}
       # Database
       TYPEORM_HOST: postgres
       TYPEORM_PORT: 5432
