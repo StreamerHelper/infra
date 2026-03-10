@@ -60,6 +60,14 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      # App
+      APP_KEYS: ${APP_KEYS:-streamer-helper-secret-key}
+      # Database (供 TypeORM 迁移脚本使用，host 一定要是 postgres)
+      TYPEORM_HOST: postgres
+      TYPEORM_PORT: 5432
+      TYPEORM_USERNAME: ${TYPEORM_USERNAME:-postgres}
+      TYPEORM_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
+      TYPEORM_DATABASE: ${TYPEORM_DATABASE:-streamerhelper}
     volumes:
       # 挂载配置文件
       - ${CONFIG_FILE:-~/.streamer-helper/config.yaml}:/app/config/config.yaml:ro
