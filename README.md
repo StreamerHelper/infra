@@ -37,13 +37,38 @@ This directory contains Docker configuration files for deploying the Streamer He
 
 ## Quick Start (One-Line Deploy)
 
-**For users - deploy with pre-built images:**
+**Deploy with default configuration:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
 ```
 
-That's it! The script will download the compose file and start all services.
+**Deploy with custom configuration:**
+
+```bash
+# Set environment variables before running
+export APP_KEYS=your-secret-key-here
+export HTTP_PORT=8080
+export TYPEORM_PASSWORD=your-db-password
+
+curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
+```
+
+**All configurable environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_KEYS` | `streamer-helper-default-...` | Session secret key |
+| `HTTP_PORT` | `80` | HTTP port |
+| `HTTPS_PORT` | `443` | HTTPS port |
+| `TYPEORM_USERNAME` | `postgres` | Database username |
+| `TYPEORM_PASSWORD` | `postgres` | Database password |
+| `TYPEORM_DATABASE` | `livestream` | Database name |
+| `REDIS_PASSWORD` | *(empty)* | Redis password |
+| `S3_ACCESS_KEY` | `minioadmin` | MinIO access key |
+| `S3_SECRET_KEY` | `minioadmin` | MinIO secret key |
+| `S3_BUCKET` | `livestream-archive` | Storage bucket name |
+| `BACKEND_VERSION` | `latest` | Docker image version |
 
 ---
 

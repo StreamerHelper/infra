@@ -1,70 +1,96 @@
 #!/bin/bash
 
-# StreamerHelper Quick Deploy Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
+#=============================================================#
+#  StreamerHelper One-Line Deploy Script                      #
+#  Usage: curl -fsSL https://raw.githubusercontent.com/        #
+#         StreamerHelper/infra/main/deploy.sh | bash          #
+#                                                             #
+#  Configuration via environment variables:                   #
+#    export APP_KEYS=your-secret-key                          #
+#    export HTTP_PORT=8080                                    #
+#    curl ... | bash                                          #
+#=============================================================#
 
 set -e
 
 COMPOSE_URL="https://raw.githubusercontent.com/StreamerHelper/infra/main/docker-compose.prod.yml"
-COMPOSE_FILE="docker-compose.streamer.yml"
-ENV_FILE=".env.streamer"
 
-echo "=== StreamerHelper Quick Deploy ==="
+# Color output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Banner
+echo ""
+echo "╔═══════════════════════════════════════════════════════════╗"
+echo "║           StreamerHelper Quick Deploy                     ║"
+echo "╚═══════════════════════════════════════════════════════════╝"
+echo ""
+
+# Show current configuration
+log_info "Configuration:"
+echo "  APP_KEYS:        ${APP_KEYS:-<default>}"
+echo "  HTTP_PORT:       ${HTTP_PORT:-80}"
+echo "  HTTPS_PORT:      ${HTTPS_PORT:-443}"
+echo "  DB_PASSWORD:     ${TYPEORM_PASSWORD:-postgres}"
+echo "  REDIS_PASSWORD:  ${REDIS_PASSWORD:-<none>}"
+echo "  MINIO_USER:      ${S3_ACCESS_KEY:-minioadmin}"
+echo "  MINIO_PASSWORD:  ${S3_SECRET_KEY:-minioadmin}"
+echo "  IMAGE_VERSION:   ${BACKEND_VERSION:-latest}"
 echo ""
 
 # Download compose file
-echo ">>> Downloading docker-compose file..."
-curl -fsSL $COMPOSE_URL -o $COMPOSE_FILE
+log_info "Downloading docker-compose file..."
+curl -fsSL "$COMPOSE_URL" -o /tmp/streamer-compose.yml
 
-# Create env file if not exists
-if [ ! -f "$ENV_FILE" ]; then
-    echo ""
-    echo ">>> Configuration"
-    echo ""
-
-    # Prompt for APP_KEYS
-    echo "Enter APP_KEYS (a secret string for session encryption)."
-    echo "Press Enter to use default (not recommended for production):"
-    read -p "APP_KEYS: " APP_KEYS_INPUT
-
-    # Use default if empty
-    if [ -z "$APP_KEYS_INPUT" ]; then
-        APP_KEYS_INPUT="streamer-helper-default-secret-key-please-change-in-production"
-        echo "Using default APP_KEYS"
-    fi
-
-    echo ""
-    echo ">>> Creating environment file..."
-    cat > $ENV_FILE << EOF
-# Generated at $(date)
-APP_KEYS=$APP_KEYS_INPUT
-
-# Ports
-HTTP_PORT=80
-HTTPS_PORT=443
-EOF
+# Stop existing services if running
+if docker ps --format '{{.Names}}' | grep -q "^streamer-"; then
+    log_info "Stopping existing services..."
+    docker compose -f /tmp/streamer-compose.yml down --remove-orphans 2>/dev/null || true
 fi
 
 # Start services
-echo ">>> Starting services..."
-docker compose -f $COMPOSE_FILE --env-file $ENV_FILE up -d
+log_info "Starting services..."
+docker compose -f /tmp/streamer-compose.yml up -d
 
-# Wait for backend to be ready
-echo ""
-echo ">>> Waiting for backend to be ready..."
-sleep 10
+# Wait for backend healthy
+log_info "Waiting for backend to be ready..."
+MAX_WAIT=120
+WAITED=0
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if docker inspect streamer-backend --format '{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
+        break
+    fi
+    sleep 5
+    WAITED=$((WAITED + 5))
+    echo "  Waiting... (${WAITED}s/${MAX_WAIT}s)"
+done
+
+if [ $WAITED -ge $MAX_WAIT ]; then
+    log_error "Backend failed to start. Check logs: docker logs streamer-backend"
+    exit 1
+fi
 
 # Run database migrations
-echo ">>> Running database migrations..."
-docker compose -f $COMPOSE_FILE --env-file $ENV_FILE exec -T backend sh -c "pnpm run migration:run" || echo "Migration completed or already applied"
+log_info "Running database migrations..."
+docker compose -f /tmp/streamer-compose.yml exec -T backend sh -c "pnpm run migration:run" 2>/dev/null || {
+    log_warn "Migration may have already been applied"
+}
 
+# Done
 echo ""
-echo "=== Deploy Complete ==="
+echo "╔═══════════════════════════════════════════════════════════╗"
+echo "║                   Deploy Complete!                        ║"
+echo "╠═══════════════════════════════════════════════════════════╣"
+echo "║  Frontend:    http://localhost:${HTTP_PORT:-80}                        "
+echo "║  MinIO:       http://localhost:9001                        "
+echo "╠═══════════════════════════════════════════════════════════╣"
+echo "║  Logs:   docker compose -f /tmp/streamer-compose.yml logs -f"
+echo "║  Stop:   docker compose -f /tmp/streamer-compose.yml down "
+echo "╚═══════════════════════════════════════════════════════════╝"
 echo ""
-echo "Services:"
-echo "  - Frontend:    http://localhost"
-echo "  - MinIO:       http://localhost:9001"
-echo ""
-echo "Commands:"
-echo "  Logs:  docker compose -f $COMPOSE_FILE logs -f"
-echo "  Stop:  docker compose -f $COMPOSE_FILE down"
