@@ -8,6 +8,7 @@ services:
       POSTGRES_USER: ${TYPEORM_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
       POSTGRES_DB: ${TYPEORM_DATABASE:-streamerhelper}
+      TYPEORM_DATABASE: ${TYPEORM_DATABASE:-streamerhelper}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -91,6 +92,8 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_temp:/app/temp
+      # 将宿主机生成的配置文件挂载进容器，供 loader 读取
+      - ${CONFIG_DIR}/config.yaml:/app/config/config.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy

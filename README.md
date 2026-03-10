@@ -37,38 +37,41 @@ This directory contains Docker configuration files for deploying the Streamer He
 
 ## Quick Start (One-Line Deploy)
 
-**Deploy with default configuration:**
+**快速一键部署（推荐）：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
 ```
 
-**Deploy with custom configuration:**
+执行后会自动完成：
+
+- 在 `~/.streamer-helper/config.yaml` 下生成配置文件（不存在时）；
+- 生成 `~/.streamer-helper/.docker-env`，把密码、密钥等从 `config.yaml` 提取出来；
+- 下载并启动 `docker-compose.prod.yml` 中的服务；
+- 后端容器启动时自动执行数据库迁移，然后再启动应用。
+
+**使用自定义配置：**
 
 ```bash
-# Set environment variables before running
-export APP_KEYS=your-secret-key-here
-export HTTP_PORT=8080
-export TYPEORM_PASSWORD=your-db-password
+# 在运行前设置（可选）
+export APP_KEYS=your-secret-key-here       # 覆盖默认生成的 app.keys
+export HTTP_PORT=8080                      # Nginx 对外暴露的 HTTP 端口
+export HTTPS_PORT=8443                     # Nginx 对外暴露的 HTTPS 端口
+export TYPEORM_PASSWORD=your-db-password   # 数据库密码（会写入 config.yaml）
+export S3_SECRET_KEY=your-minio-password   # MinIO 密码（会写入 config.yaml）
 
 curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
 ```
 
-**All configurable environment variables:**
+**deploy.sh 会使用的环境变量：**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_KEYS` | `streamer-helper-default-...` | Session secret key |
-| `HTTP_PORT` | `80` | HTTP port |
-| `HTTPS_PORT` | `443` | HTTPS port |
-| `TYPEORM_USERNAME` | `postgres` | Database username |
-| `TYPEORM_PASSWORD` | `postgres` | Database password |
-| `TYPEORM_DATABASE` | `streamerhelper` | Database name |
-| `REDIS_PASSWORD` | *(empty)* | Redis password |
-| `S3_ACCESS_KEY` | `minioadmin` | MinIO access key |
-| `S3_SECRET_KEY` | `minioadmin` | MinIO secret key |
-| `S3_BUCKET` | `streamerhelper-archive` | Storage bucket name |
-| `BACKEND_VERSION` | `latest` | Docker image version |
+| `APP_KEYS` | *(随机生成)* | 应用签名密钥，会写入 `config.yaml.app.keys` |
+| `HTTP_PORT` | `80` | Nginx 对外 HTTP 端口 |
+| `HTTPS_PORT` | `443` | Nginx 对外 HTTPS 端口 |
+| `TYPEORM_PASSWORD` | *(随机生成)* | PostgreSQL 密码，会写入 `config.yaml.database.password` |
+| `S3_SECRET_KEY` | *(随机生成)* | MinIO 密码，会写入 `config.yaml.s3.secretKey` |
 
 ---
 
@@ -132,10 +135,17 @@ Images will be pushed to:
 
 ## Database Migration
 
-Run database migrations after first deployment:
+数据库迁移会在 **后端容器启动时自动执行**：
+
+- backend 镜像的入口脚本会在启动应用前运行 `node dist/scripts/run-migrations.js`；
+- 当数据库没有新的迁移时，该脚本会直接退出并启动应用；
+- 部署脚本 `deploy.sh` 会等待 backend 健康检查通过后再提示部署完成。
+
+只有在调试或手动迁移时，你才需要进入容器执行：
 
 ```bash
-docker compose exec backend sh -c "pnpm migration:run"
+docker compose -f ~/.streamer-helper/docker-compose.yml exec backend sh
+node dist/scripts/run-migrations.js
 ```
 
 ## MinIO Setup

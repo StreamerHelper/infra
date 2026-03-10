@@ -7,17 +7,19 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package*.json ./
 
-# Install pnpm and dependencies
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --frozen-lockfile
+# Install all dependencies (including dev) for build
+RUN npm ci
 
 # Copy source code
 COPY . .
 
-# Build TypeScript
-RUN pnpm run build
+# Build TypeScript (生成 dist，包括迁移脚本)
+RUN npm run build
+
+# 只保留生产依赖，避免在生产阶段再次 npm install
+RUN npm prune --omit=dev
 
 # Production stage
 FROM node:20-alpine
@@ -27,12 +29,9 @@ RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install pnpm and production dependencies only
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --prod --frozen-lockfile
+# 直接使用 builder 已安装并 prune 过的 node_modules，不再在此阶段 npm ci
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy built files from builder (包括迁移文件)
 COPY --from=builder /app/dist ./dist

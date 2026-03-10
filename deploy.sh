@@ -119,11 +119,19 @@ else
     log_info "Using existing configuration: $CONFIG_FILE"
 fi
 
-# Create docker-compose env file (minimal, only for docker-compose itself)
+# Create docker-compose env file (used by docker-compose.yml)
 DOCKER_ENV="$CONFIG_DIR/.docker-env"
+
+# 从配置文件中提取需要的值，保持 docker-compose 与 config.yaml 一致
+APP_KEYS_VALUE=$(grep -o 'keys: *\"[^\"]*\"' "$CONFIG_FILE" | head -1 | cut -d'\"' -f2)
+DB_PASSWORD_VALUE=$(grep -o 'password: *\"[^\"]*\"' "$CONFIG_FILE" | head -1 | cut -d'\"' -f2)
+MINIO_PASSWORD_VALUE=$(grep -o 'secretKey: *\"[^\"]*\"' "$CONFIG_FILE" | head -1 | cut -d'\"' -f2)
+
 cat > "$DOCKER_ENV" << EOF
-POSTGRES_PASSWORD=$(grep -o 'password: *"[^"]*"' "$CONFIG_FILE" | head -1 | cut -d'"' -f2)
-MINIO_ROOT_PASSWORD=$(grep -o 'secretKey: *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f2)
+APP_KEYS=$APP_KEYS_VALUE
+TYPEORM_PASSWORD=$DB_PASSWORD_VALUE
+S3_SECRET_KEY=$MINIO_PASSWORD_VALUE
+CONFIG_DIR=$DATA_DIR
 HTTP_PORT=${HTTP_PORT:-80}
 HTTPS_PORT=${HTTPS_PORT:-443}
 EOF
