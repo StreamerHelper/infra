@@ -1,0 +1,4 @@
+# Local generated files
+.env
+.env.*
+docker-compose.streamer.yml
