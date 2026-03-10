@@ -55,31 +55,14 @@ services:
 
   # Backend Application
   backend:
-    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-backend:${BACKEND_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-backend:${BACKEND_VERSION:-latest}
     container_name: streamer-backend
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      APP_KEYS: ${APP_KEYS:-streamer-helper-default-secret-key-please-change-in-production}
-      # Database
-      TYPEORM_HOST: postgres
-      TYPEORM_PORT: 5432
-      TYPEORM_USERNAME: ${TYPEORM_USERNAME:-postgres}
-      TYPEORM_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
-      TYPEORM_DATABASE: ${TYPEORM_DATABASE:-livestream}
-      TYPEORM_SSL: ${TYPEORM_SSL:-false}
-      # Redis
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      REDIS_DB: ${REDIS_DB:-0}
-      # S3/MinIO
-      S3_ENDPOINT: http://minio:9000
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-livestream-archive}
     volumes:
+      # 挂载配置文件
+      - ${CONFIG_FILE:-~/.streamer-helper/config.yaml}:/app/config/config.yaml:ro
       - backend_logs:/app/logs
       - backend_temp:/app/temp
     depends_on:
@@ -100,7 +83,7 @@ services:
 
   # Frontend Application
   frontend:
-    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-frontend:${FRONTEND_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-frontend:${FRONTEND_VERSION:-latest}
     container_name: streamer-frontend
     restart: unless-stopped
     environment:
@@ -119,7 +102,7 @@ services:
 
   # Nginx Reverse Proxy
   nginx:
-    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-nginx:${NGINX_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-nginx:${NGINX_VERSION:-latest}
     container_name: streamer-nginx
     restart: unless-stopped
     ports:

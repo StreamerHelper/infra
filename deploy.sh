@@ -6,19 +6,13 @@
 #  Usage:                                                     #
 #    curl -fsSL https://raw.githubusercontent.com/             #
 #         StreamerHelper/infra/main/deploy.sh | bash          #
-#                                                             #
-#  Configuration (all optional, will prompt if required):     #
-#    export APP_KEYS=your-secret-key                          #
-#    export TYPEORM_PASSWORD=your-db-password                 #
-#    export REDIS_PASSWORD=your-redis-password                #
-#    export S3_ACCESS_KEY=minio-user                          #
-#    export S3_SECRET_KEY=minio-password                      #
 #=============================================================#
 
 set -e
 
 COMPOSE_URL="https://raw.githubusercontent.com/StreamerHelper/infra/main/docker-compose.prod.yml"
-COMPOSE_FILE="/opt/streamer-helper/docker-compose.yml"
+CONFIG_DIR="$HOME/.streamer-helper"
+CONFIG_FILE="$CONFIG_DIR/config.yaml"
 DATA_DIR="/opt/streamer-helper"
 
 # Color output
@@ -33,7 +27,6 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
 
-# Generate random secret
 generate_secret() {
   openssl rand -hex 32
 }
@@ -56,114 +49,106 @@ if ! docker compose version &> /dev/null; then
     exit 1
 fi
 
+# Create config directory
+log_step "Creating config directory: $CONFIG_DIR"
+mkdir -p "$CONFIG_DIR"
+
 # Create data directory
-log_step "Creating data directory..."
+log_step "Creating data directory: $DATA_DIR"
 sudo mkdir -p "$DATA_DIR"
-cd "$DATA_DIR"
 
-# Generate secrets if not provided
-log_step "Checking configuration..."
+# Generate config if not exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    log_step "Generating configuration..."
 
-if [ -z "$APP_KEYS" ]; then
-    if [ -f "$DATA_DIR/.env" ] && grep -q "^APP_KEYS=" "$DATA_DIR/.env"; then
-        # Load existing APP_KEYS
-        export APP_KEYS=$(grep "^APP_KEYS=" "$DATA_DIR/.env" | cut -d'=' -f2-)
-        log_info "Using existing APP_KEYS from .env"
-    else
-        export APP_KEYS=$(generate_secret)
-        log_warn "APP_KEYS not set. Generated random secret."
-        log_warn "Please save this key for future deployments: $APP_KEYS"
+    # Prompt for secrets or generate
+    if [ -z "$APP_KEYS" ]; then
+        APP_KEYS=$(generate_secret)
+        log_warn "APP_KEYS generated. Save this for future use: $APP_KEYS"
     fi
-fi
 
-# Set defaults
-export HTTP_PORT="${HTTP_PORT:-80}"
-export HTTPS_PORT="${HTTPS_PORT:-443}"
-export TYPEORM_USERNAME="${TYPEORM_USERNAME:-postgres}"
-export TYPEORM_PASSWORD="${TYPEORM_PASSWORD:-postgres}"
-export TYPEORM_DATABASE="${TYPEORM_DATABASE:-livestream}"
-export TYPEORM_SSL="${TYPEORM_SSL:-false}"
-export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
-export REDIS_DB="${REDIS_DB:-0}"
-export S3_ACCESS_KEY="${S3_ACCESS_KEY:-minioadmin}"
-export S3_SECRET_KEY="${S3_SECRET_KEY:-minioadmin}"
-export S3_BUCKET="${S3_BUCKET:-livestream-archive}"
-export S3_REGION="${S3_REGION:-us-east-1}"
-export BACKEND_VERSION="${BACKEND_VERSION:-latest}"
-export FRONTEND_VERSION="${FRONTEND_VERSION:-latest}"
-export DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
-export DOCKER_ORG="${DOCKER_ORG:-streamerhelper}"
+    DB_PASSWORD="${TYPEORM_PASSWORD:-$(generate_secret | head -c 16)}"
+    MINIO_PASSWORD="${S3_SECRET_KEY:-$(generate_secret | head -c 16)}"
 
-# Save environment to .env file for persistence
-cat > "$DATA_DIR/.env" << EOF
+    cat > "$CONFIG_FILE" << EOF
 # StreamerHelper Configuration
 # Generated at $(date -Iseconds)
 
-# Application
-APP_KEYS=${APP_KEYS}
+app:
+  port: 7001
+  keys: "${APP_KEYS}"
+  nodeEnv: production
 
-# Ports
-HTTP_PORT=${HTTP_PORT}
-HTTPS_PORT=${HTTPS_PORT}
+database:
+  host: postgres
+  port: 5432
+  username: postgres
+  password: "${DB_PASSWORD}"
+  database: livestream
+  ssl: false
 
-# Database (PostgreSQL)
-TYPEORM_USERNAME=${TYPEORM_USERNAME}
-TYPEORM_PASSWORD=${TYPEORM_PASSWORD}
-TYPEORM_DATABASE=${TYPEORM_DATABASE}
-TYPEORM_SSL=${TYPEORM_SSL}
+redis:
+  host: redis
+  port: 6379
+  password: ""
+  db: 0
 
-# Redis
-REDIS_PASSWORD=${REDIS_PASSWORD}
-REDIS_DB=${REDIS_DB}
+s3:
+  endpoint: http://minio:9000
+  region: us-east-1
+  accessKey: minioadmin
+  secretKey: "${MINIO_PASSWORD}"
+  bucket: livestream-archive
 
-# S3/MinIO
-S3_ACCESS_KEY=${S3_ACCESS_KEY}
-S3_SECRET_KEY=${S3_SECRET_KEY}
-S3_BUCKET=${S3_BUCKET}
-S3_REGION=${S3_REGION}
+recorder:
+  segmentDuration: 10
+  cacheMaxSegments: 3
+  heartbeatInterval: 5
+  heartbeatTimeout: 10
+  maxRecordingTime: 86400
 
-# Image versions
-BACKEND_VERSION=${BACKEND_VERSION}
-FRONTEND_VERSION=${FRONTEND_VERSION}
-DOCKER_REGISTRY=${DOCKER_REGISTRY}
-DOCKER_ORG=${DOCKER_ORG}
+poller:
+  checkInterval: 60
+  totalInstances: 1
+  concurrency: 5
+
+upload:
+  defaultTid: 171
+  defaultTitleTemplate: "{streamerName}的直播录像 {date}"
 EOF
 
-chmod 600 "$DATA_DIR/.env"
-log_info "Configuration saved to $DATA_DIR/.env"
+    chmod 600 "$CONFIG_FILE"
+    log_info "Configuration saved to $CONFIG_FILE"
+else
+    log_info "Using existing configuration: $CONFIG_FILE"
+fi
 
-# Show configuration (hide secrets)
-log_info "Configuration:"
-echo "  HTTP_PORT:       ${HTTP_PORT}"
-echo "  HTTPS_PORT:      ${HTTPS_PORT}"
-echo "  DB_USER:         ${TYPEORM_USERNAME}"
-echo "  DB_PASSWORD:     ********"
-echo "  DB_NAME:         ${TYPEORM_DATABASE}"
-echo "  REDIS_PASSWORD:  $([ -n "$REDIS_PASSWORD" ] && echo '********' || echo '<none>')"
-echo "  MINIO_USER:      ${S3_ACCESS_KEY}"
-echo "  MINIO_PASSWORD:  ********"
-echo "  S3_BUCKET:       ${S3_BUCKET}"
-echo "  BACKEND_VERSION: ${BACKEND_VERSION}"
-echo "  FRONTEND_VERSION:${FRONTEND_VERSION}"
-echo ""
+# Create docker-compose env file (minimal, only for docker-compose itself)
+DOCKER_ENV="$CONFIG_DIR/.docker-env"
+cat > "$DOCKER_ENV" << EOF
+POSTGRES_PASSWORD=$(grep -o 'password: *"[^"]*"' "$CONFIG_FILE" | head -1 | cut -d'"' -f2)
+MINIO_ROOT_PASSWORD=$(grep -o 'secretKey: *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f2)
+HTTP_PORT=${HTTP_PORT:-80}
+HTTPS_PORT=${HTTPS_PORT:-443}
+EOF
 
 # Download compose file
 log_step "Downloading docker-compose file..."
-curl -fsSL "$COMPOSE_URL" -o "$COMPOSE_FILE"
+curl -fsSL "$COMPOSE_URL" -o "$DATA_DIR/docker-compose.yml"
 
 # Stop existing services
 if docker ps --format '{{.Names}}' | grep -q "^streamer-"; then
     log_step "Stopping existing services..."
-    docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+    docker compose -f "$DATA_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
 fi
 
 # Pull images
 log_step "Pulling images..."
-docker compose -f "$COMPOSE_FILE" pull
+docker compose -f "$DATA_DIR/docker-compose.yml" --env-file "$DOCKER_ENV" pull
 
 # Start services
 log_step "Starting services..."
-docker compose -f "$COMPOSE_FILE" up -d
+docker compose -f "$DATA_DIR/docker-compose.yml" --env-file "$DOCKER_ENV" up -d
 
 # Wait for backend healthy
 log_step "Waiting for backend to be ready..."
@@ -174,54 +159,31 @@ while [ $WAITED -lt $MAX_WAIT ]; do
     if [ "$STATUS" = "healthy" ]; then
         break
     fi
-    if [ "$STATUS" = "unhealthy" ]; then
-        log_error "Backend is unhealthy. Check logs: docker logs streamer-backend"
-        exit 1
-    fi
     sleep 5
     WAITED=$((WAITED + 5))
-    echo "  Waiting... (${WAITED}s/${MAX_WAIT}s) - Status: ${STATUS}"
+    echo "  Waiting... (${WAITED}s/${MAX_WAIT}s)"
 done
 
 if [ $WAITED -ge $MAX_WAIT ]; then
-    log_error "Backend failed to start within ${MAX_WAIT}s"
-    log_error "Check logs: docker logs streamer-backend"
+    log_error "Backend failed to start"
+    docker logs streamer-backend --tail 50
     exit 1
 fi
 
 log_info "Backend is healthy!"
-
-# Run database migrations
-log_step "Running database migrations..."
-docker compose -f "$COMPOSE_FILE" exec -T backend sh -c "node dist/migration/run.js" 2>/dev/null || {
-    log_warn "Migration command not found or failed. Trying npm script..."
-    docker compose -f "$COMPOSE_FILE" exec -T backend npm run migration:run 2>/dev/null || {
-        log_warn "Migrations may have already been applied"
-    }
-}
-
-# Create MinIO bucket if not exists
-log_step "Initializing MinIO bucket..."
-sleep 5
-docker compose -f "$COMPOSE_FILE" exec -T minio sh -c "
-    mc alias set local http://localhost:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY} 2>/dev/null || true
-    mc mb local/${S3_BUCKET} --ignore-existing 2>/dev/null || true
-" 2>/dev/null || log_warn "MinIO init skipped (mc not available)"
 
 # Done
 echo ""
 echo "╔═══════════════════════════════════════════════════════════╗"
 echo "║                   Deploy Complete!                        ║"
 echo "╠═══════════════════════════════════════════════════════════╣"
-echo "║                                                           ║"
-echo "║  🌐 Application:  http://localhost:${HTTP_PORT}                      "
+echo "║  🌐 Application:   http://localhost:${HTTP_PORT:-80}                    "
 echo "║  📦 MinIO Console: http://localhost:9001                  ║"
-echo "║                                                           ║"
+echo "║  📁 Config:        $CONFIG_DIR       "
 echo "╠═══════════════════════════════════════════════════════════╣"
 echo "║  Commands:                                                ║"
-echo "║  • View logs:   docker compose -f $COMPOSE_FILE logs -f"
-echo "║  • Stop:        docker compose -f $COMPOSE_FILE down"
-echo "║  • Restart:     docker compose -f $COMPOSE_FILE restart"
-echo "║  • Update:      curl ... | bash  (run deploy again)"
+echo "║  • View logs:   docker compose -f $DATA_DIR/docker-compose.yml logs -f"
+echo "║  • Stop:        docker compose -f $DATA_DIR/docker-compose.yml down"
+echo "║  • Edit config: vim $CONFIG_FILE && docker compose restart backend"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo ""

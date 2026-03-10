@@ -15,7 +15,7 @@ set -e
 # Configuration
 VERSION=${1:-latest}
 REGISTRY=${DOCKER_REGISTRY:-docker.io}
-ORG=${DOCKER_ORG:-streamerhelper}
+ORG=${DOCKER_ORG:-umuoy1}
 IMAGE_PREFIX=${IMAGE_PREFIX:-streamerhelper}
 NO_CACHE=""
 
