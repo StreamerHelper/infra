@@ -13,7 +13,7 @@ set -e
 COMPOSE_URL="https://raw.githubusercontent.com/StreamerHelper/infra/main/docker-compose.prod.yml"
 CONFIG_DIR="$HOME/.streamer-helper"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
-DATA_DIR="/opt/streamer-helper"
+DATA_DIR="$CONFIG_DIR"
 
 # Color output
 RED='\033[0;31m'
@@ -50,12 +50,8 @@ if ! docker compose version &> /dev/null; then
 fi
 
 # Create config directory
-log_step "Creating config directory: $CONFIG_DIR"
+log_step "Creating directory: $CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
-
-# Create data directory
-log_step "Creating data directory: $DATA_DIR"
-sudo mkdir -p "$DATA_DIR"
 
 # Generate config if not exists
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -84,7 +80,7 @@ database:
   port: 5432
   username: postgres
   password: "${DB_PASSWORD}"
-  database: livestream
+  database: streamerhelper
   ssl: false
 
 redis:
@@ -98,7 +94,7 @@ s3:
   region: us-east-1
   accessKey: minioadmin
   secretKey: "${MINIO_PASSWORD}"
-  bucket: livestream-archive
+  bucket: streamerhelper-archive
 
 recorder:
   segmentDuration: 10

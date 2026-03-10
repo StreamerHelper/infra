@@ -7,13 +7,13 @@ services:
     environment:
       POSTGRES_USER: ${TYPEORM_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
-      POSTGRES_DB: ${TYPEORM_DATABASE:-livestream}
+      POSTGRES_DB: ${TYPEORM_DATABASE:-streamerhelper}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${TYPEORM_USERNAME:-postgres} -d ${TYPEORM_DATABASE:-livestream}"]
+      test: ["CMD-SHELL", "pg_isready -U ${TYPEORM_USERNAME:-postgres} -d ${TYPEORM_DATABASE:-streamerhelper}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -75,7 +75,7 @@ services:
       TYPEORM_PORT: 5432
       TYPEORM_USERNAME: ${TYPEORM_USERNAME:-postgres}
       TYPEORM_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
-      TYPEORM_DATABASE: ${TYPEORM_DATABASE:-livestream}
+      TYPEORM_DATABASE: ${TYPEORM_DATABASE:-streamerhelper}
       TYPEORM_SSL: ${TYPEORM_SSL:-false}
       # Redis
       REDIS_HOST: redis
@@ -87,7 +87,7 @@ services:
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-livestream-archive}
+      S3_BUCKET: ${S3_BUCKET:-streamerhelper-archive}
     volumes:
       - backend_logs:/app/logs
       - backend_temp:/app/temp

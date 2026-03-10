@@ -63,11 +63,11 @@ curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh
 | `HTTPS_PORT` | `443` | HTTPS port |
 | `TYPEORM_USERNAME` | `postgres` | Database username |
 | `TYPEORM_PASSWORD` | `postgres` | Database password |
-| `TYPEORM_DATABASE` | `livestream` | Database name |
+| `TYPEORM_DATABASE` | `streamerhelper` | Database name |
 | `REDIS_PASSWORD` | *(empty)* | Redis password |
 | `S3_ACCESS_KEY` | `minioadmin` | MinIO access key |
 | `S3_SECRET_KEY` | `minioadmin` | MinIO secret key |
-| `S3_BUCKET` | `livestream-archive` | Storage bucket name |
+| `S3_BUCKET` | `streamerhelper-archive` | Storage bucket name |
 | `BACKEND_VERSION` | `latest` | Docker image version |
 
 ---
@@ -144,7 +144,7 @@ After starting services, create the required bucket:
 
 1. Open MinIO Console: http://localhost:9001
 2. Login with `S3_ACCESS_KEY` and `S3_SECRET_KEY`
-3. Create a bucket named `livestream-archive`
+3. Create a bucket named `streamerhelper-archive`
 4. Set bucket policy to public read (if needed)
 
 ## Configuration
@@ -156,11 +156,11 @@ After starting services, create the required bucket:
 | `APP_KEYS` | - | Application secret key |
 | `TYPEORM_USERNAME` | postgres | Database username |
 | `TYPEORM_PASSWORD` | postgres | Database password |
-| `TYPEORM_DATABASE` | livestream | Database name |
+| `TYPEORM_DATABASE` | streamerhelper | Database name |
 | `REDIS_PASSWORD` | - | Redis password (optional) |
 | `S3_ACCESS_KEY` | minioadmin | MinIO access key |
 | `S3_SECRET_KEY` | minioadmin | MinIO secret key |
-| `S3_BUCKET` | livestream-archive | Storage bucket name |
+| `S3_BUCKET` | streamerhelper-archive | Storage bucket name |
 
 ### Ports
 
