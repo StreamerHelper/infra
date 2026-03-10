@@ -85,9 +85,9 @@ curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh
 ```
 
 Images will be pushed to:
-- `docker.io/umuoy1/backend:latest`
-- `docker.io/umuoy1/frontend:latest`
-- `docker.io/umuoy1/nginx:latest`
+- `docker.io/umuoy1/streamerhelper-backend:latest`
+- `docker.io/umuoy1/streamerhelper-frontend:latest`
+- `docker.io/umuoy1/streamerhelper-nginx:latest`
 
 ### Local Development
 

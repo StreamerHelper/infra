@@ -55,7 +55,7 @@ services:
 
   # Backend Application
   backend:
-    image: ${DOCKER_REGISTRY:-docker.io}/umuoy1/backend:${BACKEND_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-backend:${BACKEND_VERSION:-latest}
     container_name: streamer-backend
     restart: unless-stopped
     environment:
@@ -100,7 +100,7 @@ services:
 
   # Frontend Application
   frontend:
-    image: ${DOCKER_REGISTRY:-docker.io}/umuoy1/frontend:${FRONTEND_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-frontend:${FRONTEND_VERSION:-latest}
     container_name: streamer-frontend
     restart: unless-stopped
     environment:
@@ -119,7 +119,7 @@ services:
 
   # Nginx Reverse Proxy
   nginx:
-    image: ${DOCKER_REGISTRY:-docker.io}/umuoy1/nginx:${NGINX_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-nginx:${NGINX_VERSION:-latest}
     container_name: streamer-nginx
     restart: unless-stopped
     ports:
