@@ -11,8 +11,8 @@
 set -e
 
 COMPOSE_URL="https://raw.githubusercontent.com/StreamerHelper/infra/main/docker-compose.prod.yml"
-CONFIG_DIR="$HOME/.streamer-helper"
-CONFIG_FILE="$CONFIG_DIR/config.yaml"
+CONFIG_DIR="${STREAMER_HELPER_CONFIG_DIR:-$HOME/.streamer-helper}"
+CONFIG_FILE="$CONFIG_DIR/config.json"
 DATA_DIR="$CONFIG_DIR"
 
 # Color output
@@ -49,108 +49,78 @@ if ! docker compose version &> /dev/null; then
     exit 1
 fi
 
+if ! command -v jq &> /dev/null; then
+    log_error "jq is required to read/write config.json. Install it: apt install jq / brew install jq"
+    exit 1
+fi
+
 # Create config directory
 log_step "Creating directory: $CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
 
-# Generate config if not exists
+# Generate config if not exists (standard JSON, editable and tool-friendly)
 if [ ! -f "$CONFIG_FILE" ]; then
     log_step "Generating configuration..."
 
-    # Prompt for secrets or generate
-    if [ -z "$APP_KEYS" ]; then
+    if [ -z "${APP_KEYS:-}" ]; then
         APP_KEYS=$(generate_secret)
         log_warn "APP_KEYS generated. Save this for future use: $APP_KEYS"
     fi
-
     DB_PASSWORD="${TYPEORM_PASSWORD:-$(generate_secret | head -c 16)}"
     MINIO_PASSWORD="${S3_SECRET_KEY:-$(generate_secret | head -c 16)}"
 
-    cat > "$CONFIG_FILE" << EOF
-# StreamerHelper Configuration
-# Generated at $(date -Iseconds)
-
-app:
-  port: 7001
-  keys: "${APP_KEYS}"
-  nodeEnv: production
-
-database:
-  host: postgres
-  port: 5432
-  username: postgres
-  password: "${DB_PASSWORD}"
-  database: streamerhelper
-  ssl: false
-
-redis:
-  host: redis
-  port: 6379
-  password: ""
-  db: 0
-
-s3:
-  endpoint: http://minio:9000
-  region: us-east-1
-  accessKey: minioadmin
-  secretKey: "${MINIO_PASSWORD}"
-  bucket: streamerhelper-archive
-
-recorder:
-  segmentDuration: 10
-  cacheMaxSegments: 3
-  heartbeatInterval: 5
-  heartbeatTimeout: 10
-  maxRecordingTime: 86400
-
-poller:
-  checkInterval: 60
-  totalInstances: 1
-  concurrency: 5
-
-upload:
-  defaultTid: 171
-  defaultTitleTemplate: "{streamerName}的直播录像 {date}"
-EOF
-
+    jq -n \
+        --arg app_keys "$APP_KEYS" \
+        --arg db_password "$DB_PASSWORD" \
+        --arg s3_secret "$MINIO_PASSWORD" \
+        '{
+          app: { port: 7001, keys: $app_keys, nodeEnv: "production" },
+          database: { host: "postgres", port: 5432, username: "postgres", password: $db_password, database: "streamerhelper", ssl: false },
+          redis: { host: "redis", port: 6379, password: "", db: 0 },
+          s3: { endpoint: "http://minio:9000", region: "us-east-1", accessKey: "minioadmin", secretKey: $s3_secret, bucket: "streamerhelper-archive" },
+          recorder: { segmentDuration: 10, cacheMaxSegments: 3, heartbeatInterval: 5, heartbeatTimeout: 10, maxRecordingTime: 86400 },
+          poller: { checkInterval: 60, totalInstances: 1, concurrency: 5 },
+          upload: { defaultTid: 171, defaultTitleTemplate: "{streamerName}的直播录像 {date}" }
+        }' > "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
     log_info "Configuration saved to $CONFIG_FILE"
 else
     log_info "Using existing configuration: $CONFIG_FILE"
 fi
 
-# Create docker-compose env file (used by docker-compose.yml)
+# Create docker-compose env file (values from config.json via jq)
 DOCKER_ENV="$CONFIG_DIR/.docker-env"
 
-# 从配置文件中提取需要的值，保持 docker-compose 与 config.yaml 一致
-APP_KEYS_VALUE=$(grep -o 'keys: *\"[^\"]*\"' "$CONFIG_FILE" | head -1 | cut -d'\"' -f2)
-DB_PASSWORD_VALUE=$(grep -o 'password: *\"[^\"]*\"' "$CONFIG_FILE" | head -1 | cut -d'\"' -f2)
-MINIO_PASSWORD_VALUE=$(grep -o 'secretKey: *\"[^\"]*\"' "$CONFIG_FILE" | head -1 | cut -d'\"' -f2)
+APP_KEYS_VALUE=$(jq -r '.app.keys // empty' "$CONFIG_FILE")
+TYPEORM_PASSWORD_VALUE=$(jq -r '.database.password // empty' "$CONFIG_FILE")
+S3_SECRET_KEY_VALUE=$(jq -r '.s3.secretKey // empty' "$CONFIG_FILE")
 
-cat > "$DOCKER_ENV" << EOF
-APP_KEYS=$APP_KEYS_VALUE
-TYPEORM_PASSWORD=$DB_PASSWORD_VALUE
-S3_SECRET_KEY=$MINIO_PASSWORD_VALUE
-CONFIG_DIR=$DATA_DIR
-HTTP_PORT=${HTTP_PORT:-80}
-HTTPS_PORT=${HTTPS_PORT:-443}
-EOF
+if [ -z "$APP_KEYS_VALUE" ] || [ -z "$TYPEORM_PASSWORD_VALUE" ] || [ -z "$S3_SECRET_KEY_VALUE" ]; then
+    log_error "Invalid or incomplete $CONFIG_FILE (missing app.keys, database.password, or s3.secretKey)"
+    exit 1
+fi
+
+# Escape single quotes for use in KEY='value' env file
+shell_quote() { printf '%s' "$1" | sed "s/'/'\\\\''/g"; }
+
+{
+  printf "APP_KEYS='%s'\n" "$(shell_quote "$APP_KEYS_VALUE")"
+  printf "TYPEORM_PASSWORD='%s'\n" "$(shell_quote "$TYPEORM_PASSWORD_VALUE")"
+  printf "S3_SECRET_KEY='%s'\n" "$(shell_quote "$S3_SECRET_KEY_VALUE")"
+  printf "CONFIG_DIR=%s\n" "$(shell_quote "$DATA_DIR")"
+  printf "HTTP_PORT=%s\n" "${HTTP_PORT:-80}"
+  printf "HTTPS_PORT=%s\n" "${HTTPS_PORT:-443}"
+} > "$DOCKER_ENV"
 
 # Download compose file
 log_step "Downloading docker-compose file..."
 curl -fsSL "$COMPOSE_URL" -o "$DATA_DIR/docker-compose.yml"
 
-# Stop existing services
-if docker ps --format '{{.Names}}' | grep -q "^streamer-"; then
-    log_step "Stopping existing services..."
-    docker compose -f "$DATA_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
-fi
-
-# Pull images
+# 不使用 down，避免重建 Postgres 容器导致「卷内密码」与「.docker-env 密码」不一致
+# 启动/重启请始终带 --env-file，保证与 config.json 一致
 log_step "Pulling images..."
 docker compose -f "$DATA_DIR/docker-compose.yml" --env-file "$DOCKER_ENV" pull
 
-# Start services
 log_step "Starting services..."
 docker compose -f "$DATA_DIR/docker-compose.yml" --env-file "$DOCKER_ENV" up -d
 
@@ -186,8 +156,9 @@ echo "║  📦 MinIO Console: http://localhost:9001                  ║"
 echo "║  📁 Config:        $CONFIG_DIR       "
 echo "╠═══════════════════════════════════════════════════════════╣"
 echo "║  Commands:                                                ║"
-echo "║  • View logs:   docker compose -f $DATA_DIR/docker-compose.yml logs -f"
-echo "║  • Stop:        docker compose -f $DATA_DIR/docker-compose.yml down"
-echo "║  • Edit config: vim $CONFIG_FILE && docker compose restart backend"
+echo "║  • Start/重启: docker compose -f $DATA_DIR/docker-compose.yml --env-file $DOCKER_ENV up -d"
+echo "║  • View logs:  docker compose -f $DATA_DIR/docker-compose.yml logs -f"
+echo "║  • Stop:       docker compose -f $DATA_DIR/docker-compose.yml down"
+echo "║  • Edit config: edit $CONFIG_FILE then run Start/重启 above (do not change database.password after first run)"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo ""

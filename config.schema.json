@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StreamerHelper Config",
+  "description": "Application config file: ~/.streamer-helper/config.json",
+  "type": "object",
+  "required": ["app", "database", "redis", "s3", "recorder", "poller", "upload"],
+  "properties": {
+    "app": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "default": 7001 },
+        "keys": { "type": "string", "description": "Session/cookie signing secret" },
+        "nodeEnv": { "enum": ["development", "production", "test"] }
+      }
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "database": { "type": "string" },
+        "ssl": { "type": "boolean" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer" },
+        "password": { "type": "string" },
+        "db": { "type": "integer" }
+      }
+    },
+    "s3": {
+      "type": "object",
+      "properties": {
+        "endpoint": { "type": "string" },
+        "region": { "type": "string" },
+        "accessKey": { "type": "string" },
+        "secretKey": { "type": "string" },
+        "bucket": { "type": "string" }
+      }
+    },
+    "recorder": {
+      "type": "object",
+      "properties": {
+        "segmentDuration": { "type": "integer" },
+        "cacheMaxSegments": { "type": "integer" },
+        "heartbeatInterval": { "type": "integer" },
+        "heartbeatTimeout": { "type": "integer" },
+        "maxRecordingTime": { "type": "integer" }
+      }
+    },
+    "poller": {
+      "type": "object",
+      "properties": {
+        "checkInterval": { "type": "integer" },
+        "totalInstances": { "type": "integer" },
+        "concurrency": { "type": "integer" }
+      }
+    },
+    "upload": {
+      "type": "object",
+      "properties": {
+        "defaultTid": { "type": "integer" },
+        "defaultTitleTemplate": { "type": "string" }
+      }
+    }
+  }
+}
