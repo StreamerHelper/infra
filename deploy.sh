@@ -114,27 +114,6 @@ fi
 # Escape single quotes for use in KEY='value' env file
 shell_quote() { printf '%s' "$1" | sed "s/'/'\\\\''/g"; }
 
-# Check if postgres data volume exists with old password
-POSTgres_volume="streamer-postgres"
-if docker volume inspect "$postgres_volume" --format '{{.Mountpoint}}' 2>/dev/null | grep -q "exists"; then
-    # Get current password from postgres container env
-    current_env=$(docker exec "$postgres_volume" env 2>/dev/null | grep -i "POSTGRES_PASSWORD" || true)
-    if [ -n "$current_env" ]; then
-        # Check if password matches
-        if ! echo "$current_env" | grep -q "$TYPEORM_PASSWORD_VALUE" > /dev/null; then
-            log_error "Password mismatch detected!"
-            log_error "Postgres was initialized with a different password than in $CONFIG_FILE"
-            log_error ""
-            log_error "To fix this issue, you have two options:"
-            log_error "  1. Update $CONFIG_FILE with the original password, OR"
-            log_error "  2. Reset everything: docker compose -f $DATA_DIR/docker-compose.yml down -v && rm -rf $DATA_DIR"
-            log_error "     Then run this deploy script again"
-            log_error ""
-            log_error "WARNING: Option 2 will DELETE ALL DATA"
-            exit 1
-    fi
-fi
-
 {
   printf "APP_KEYS='%s'\n" "$(shell_quote "$APP_KEYS_VALUE")"
   printf "TYPEORM_PASSWORD='%s'\n" "$(shell_quote "$TYPEORM_PASSWORD_VALUE")"
@@ -150,6 +129,38 @@ fi
 # Download compose file
 log_step "Downloading docker-compose file..."
 curl -fsSL "$COMPOSE_URL" -o "$DATA_DIR/docker-compose.yml"
+
+# Check if postgres container already exists with different password
+POSTGRES_CONTAINER="streamer-postgres"
+if docker ps -a --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
+    # Container exists, check if it's using the same password
+    EXISTING_ENV=$(docker inspect "$POSTGRES_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep "POSTGRES_PASSWORD=" || true)
+    if [ -n "$EXISTING_ENV" ]; then
+        EXISTING_PASSWORD=$(echo "$EXISTING_ENV" | cut -d'=' -f2)
+        if [ "$EXISTING_PASSWORD" != "$TYPEORM_PASSWORD_VALUE" ]; then
+            log_error ""
+            log_error "========================================="
+            log_error "Password mismatch detected!"
+            log_error "========================================="
+            log_error ""
+            log_error "Existing postgres container has password: $EXISTING_PASSWORD"
+            log_error "Config file has password: $TYPEORM_PASSWORD_VALUE"
+            log_error ""
+            log_error "To fix this issue, you have two options:"
+            log_error ""
+            log_error "  1. Update $CONFIG_FILE with the original password:"
+            log_error "     jq '.database.password = \"$EXISTING_PASSWORD\"' $CONFIG_FILE > tmp && mv tmp $CONFIG_FILE"
+            log_error ""
+            log_error "  2. Delete everything and start fresh:"
+            log_error "     docker compose -f $DATA_DIR/docker-compose.yml down -v"
+            log_error "     Then run this deploy script again"
+            log_error ""
+            log_error "WARNING: Option 2 will DELETE ALL DATA"
+            log_error ""
+            exit 1
+        fi
+    fi
+fi
 
 # 不使用 down，避免重建 Postgres 容器导致「卷内密码」与「.docker-env 密码」不一致
 # 启动/重启请始终带 --env-file，保证与 settings.json 一致
