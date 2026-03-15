@@ -102,6 +102,9 @@ DOCKER_ENV="$CONFIG_DIR/.docker-env"
 APP_KEYS_VALUE=$(jq -r '.app.keys // empty' "$CONFIG_FILE")
 TYPEORM_PASSWORD_VALUE=$(jq -r '.database.password // empty' "$CONFIG_FILE")
 S3_SECRET_KEY_VALUE=$(jq -r '.s3.secretKey // empty' "$CONFIG_FILE")
+S3_ACCESS_KEY_VALUE=$(jq -r '.s3.accessKey // empty' "$CONFIG_FILE")
+S3_BUCKET_VALUE=$(jq -r '.s3.bucket // empty' "$CONFIG_FILE")
+S3_REGION_VALUE=$(jq -r '.s3.region // empty' "$CONFIG_FILE")
 
 if [ -z "$APP_KEYS_VALUE" ] || [ -z "$TYPEORM_PASSWORD_VALUE" ] || [ -z "$S3_SECRET_KEY_VALUE" ]; then
     log_error "Invalid or incomplete $CONFIG_FILE (missing app.keys, database.password, or s3.secretKey)"
@@ -111,10 +114,34 @@ fi
 # Escape single quotes for use in KEY='value' env file
 shell_quote() { printf '%s' "$1" | sed "s/'/'\\\\''/g"; }
 
+# Check if postgres data volume exists with old password
+POSTgres_volume="streamer-postgres"
+if docker volume inspect "$postgres_volume" --format '{{.Mountpoint}}' 2>/dev/null | grep -q "exists"; then
+    # Get current password from postgres container env
+    current_env=$(docker exec "$postgres_volume" env 2>/dev/null | grep -i "POSTGRES_PASSWORD" || true)
+    if [ -n "$current_env" ]; then
+        # Check if password matches
+        if ! echo "$current_env" | grep -q "$TYPEORM_PASSWORD_VALUE" > /dev/null; then
+            log_error "Password mismatch detected!"
+            log_error "Postgres was initialized with a different password than in $CONFIG_FILE"
+            log_error ""
+            log_error "To fix this issue, you have two options:"
+            log_error "  1. Update $CONFIG_FILE with the original password, OR"
+            log_error "  2. Reset everything: docker compose -f $DATA_DIR/docker-compose.yml down -v && rm -rf $DATA_DIR"
+            log_error "     Then run this deploy script again"
+            log_error ""
+            log_error "WARNING: Option 2 will DELETE ALL DATA"
+            exit 1
+    fi
+fi
+
 {
   printf "APP_KEYS='%s'\n" "$(shell_quote "$APP_KEYS_VALUE")"
   printf "TYPEORM_PASSWORD='%s'\n" "$(shell_quote "$TYPEORM_PASSWORD_VALUE")"
   printf "S3_SECRET_KEY='%s'\n" "$(shell_quote "$S3_SECRET_KEY_VALUE")"
+  printf "S3_ACCESS_KEY='%s'\n" "${S3_ACCESS_KEY_VALUE:-minioadmin}"
+  printf "S3_BUCKET='%s'\n" "${S3_BUCKET_VALUE:-streamerhelper-archive}"
+  printf "S3_REGION='%s'\n" "${S3_REGION_VALUE:-us-east-1}"
   printf "CONFIG_DIR=%s\n" "$(shell_quote "$DATA_DIR")"
   printf "HTTP_PORT=%s\n" "${HTTP_PORT:-80}"
   printf "HTTPS_PORT=%s\n" "${HTTPS_PORT:-443}"
