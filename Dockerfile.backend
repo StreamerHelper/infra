@@ -6,11 +6,17 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files (support both npm and pnpm)
+COPY package.json package-lock.json* pnpm-lock.yaml* ./
 
-# Install all dependencies (including dev) for build
-RUN npm ci
+# Install dependencies (prefer npm if package-lock.json exists)
+RUN if [ -f package-lock.json ]; then \
+        npm ci; \
+    elif [ -f pnpm-lock.yaml ]; then \
+        corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile; \
+    else \
+        npm install; \
+    fi
 
 # Copy source code
 COPY . .
@@ -24,13 +30,13 @@ RUN npm prune --omit=dev
 # Production stage
 FROM node:20-alpine
 
-# Install FFmpeg for video processing
-RUN apk add --no-cache ffmpeg
+# Install FFmpeg for video processing and netcat for health checks
+RUN apk add --no-cache ffmpeg netcat-openbsd
 
 WORKDIR /app
 
 # 直接使用 builder 已安装并 prune 过的 node_modules，不再在此阶段 npm ci
-COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 
 # Copy built files from builder (包括迁移文件)
@@ -39,14 +45,14 @@ COPY --from=builder /app/bootstrap.js ./
 COPY --from=builder /app/docker-entrypoint.sh ./
 
 # Create required directories
-RUN mkdir -p logs temp && chmod +x docker-entrypoint.sh
+RUN mkdir -p logs temp config && chmod +x docker-entrypoint.sh
 
 # Expose port
 EXPOSE 7001
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:7001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+  CMD nc -z localhost 7001 || exit 1
 
 # Start application
 ENTRYPOINT ["./docker-entrypoint.sh"]

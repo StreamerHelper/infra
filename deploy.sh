@@ -12,7 +12,8 @@ set -e
 
 COMPOSE_URL="https://raw.githubusercontent.com/StreamerHelper/infra/main/docker-compose.prod.yml"
 CONFIG_DIR="${STREAMER_HELPER_CONFIG_DIR:-$HOME/.streamer-helper}"
-CONFIG_FILE="$CONFIG_DIR/config.json"
+CONFIG_FILE="$CONFIG_DIR/settings.json"
+OLD_CONFIG_FILE="$CONFIG_DIR/config.json"  # Legacy config file name
 DATA_DIR="$CONFIG_DIR"
 
 # Color output
@@ -50,13 +51,20 @@ if ! docker compose version &> /dev/null; then
 fi
 
 if ! command -v jq &> /dev/null; then
-    log_error "jq is required to read/write config.json. Install it: apt install jq / brew install jq"
+    log_error "jq is required to read/write settings.json. Install it: apt install jq / brew install jq"
     exit 1
 fi
 
 # Create config directory
 log_step "Creating directory: $CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
+
+# Migrate old config file if exists
+if [ -f "$OLD_CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+    log_step "Migrating old config.json to settings.json..."
+    mv "$OLD_CONFIG_FILE" "$CONFIG_FILE"
+    log_info "Migration complete. Your settings are now in $CONFIG_FILE"
+fi
 
 # Generate config if not exists (standard JSON, editable and tool-friendly)
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -88,7 +96,7 @@ else
     log_info "Using existing configuration: $CONFIG_FILE"
 fi
 
-# Create docker-compose env file (values from config.json via jq)
+# Create docker-compose env file (values from settings.json via jq)
 DOCKER_ENV="$CONFIG_DIR/.docker-env"
 
 APP_KEYS_VALUE=$(jq -r '.app.keys // empty' "$CONFIG_FILE")
@@ -117,7 +125,7 @@ log_step "Downloading docker-compose file..."
 curl -fsSL "$COMPOSE_URL" -o "$DATA_DIR/docker-compose.yml"
 
 # 不使用 down，避免重建 Postgres 容器导致「卷内密码」与「.docker-env 密码」不一致
-# 启动/重启请始终带 --env-file，保证与 config.json 一致
+# 启动/重启请始终带 --env-file，保证与 settings.json 一致
 log_step "Pulling images..."
 docker compose -f "$DATA_DIR/docker-compose.yml" --env-file "$DOCKER_ENV" pull
 
@@ -151,14 +159,16 @@ echo ""
 echo "╔═══════════════════════════════════════════════════════════╗"
 echo "║                   Deploy Complete!                        ║"
 echo "╠═══════════════════════════════════════════════════════════╣"
-echo "║  🌐 Application:   http://localhost:${HTTP_PORT:-80}                    "
-echo "║  📦 MinIO Console: http://localhost:9001                  ║"
-echo "║  📁 Config:        $CONFIG_DIR       "
+echo "║  Application:   http://localhost:${HTTP_PORT:-80}"
+echo "║  MinIO Console: http://localhost:9001"
+echo "║  Config:        $CONFIG_FILE"
 echo "╠═══════════════════════════════════════════════════════════╣"
-echo "║  Commands:                                                ║"
-echo "║  • Start/重启: docker compose -f $DATA_DIR/docker-compose.yml --env-file $DOCKER_ENV up -d"
-echo "║  • View logs:  docker compose -f $DATA_DIR/docker-compose.yml logs -f"
-echo "║  • Stop:       docker compose -f $DATA_DIR/docker-compose.yml down"
-echo "║  • Edit config: edit $CONFIG_FILE then run Start/重启 above (do not change database.password after first run)"
+echo "║  Commands:"
+echo "║  • Start:   docker compose -f $DATA_DIR/docker-compose.yml --env-file $DOCKER_ENV up -d"
+echo "║  • Logs:    docker compose -f $DATA_DIR/docker-compose.yml logs -f"
+echo "║  • Stop:    docker compose -f $DATA_DIR/docker-compose.yml down"
+echo "║  • Restart: docker compose -f $DATA_DIR/docker-compose.yml --env-file $DOCKER_ENV restart"
+echo "║"
+echo "║  Note: Do not change database.password after first run"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo ""

@@ -4,11 +4,16 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* ./
+COPY package.json pnpm-lock.yaml* package-lock.json* ./
 
-# Install pnpm and dependencies
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --frozen-lockfile
+# Install dependencies (prefer pnpm if lock file exists)
+RUN if [ -f pnpm-lock.yaml ]; then \
+        corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile; \
+    elif [ -f package-lock.json ]; then \
+        npm ci; \
+    else \
+        npm install; \
+    fi
 
 # Copy source code
 COPY . .
@@ -19,7 +24,7 @@ ENV NEXT_PUBLIC_API_URL=
 ENV NODE_ENV=production
 
 # Build Next.js application (standalone output)
-RUN pnpm run build
+RUN npm run build
 
 # Production stage
 FROM node:20-alpine

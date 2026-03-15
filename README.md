@@ -33,7 +33,7 @@ This directory contains Docker configuration files for deploying the Streamer He
 
 - Docker 20.10+
 - Docker Compose 2.0+
-- **jq**（一键部署脚本用于读写 `config.json`）：`apt install jq` / `brew install jq`
+- **jq**（一键部署脚本用于读写 `settings.json`）：`apt install jq` / `brew install jq`
 - At least 4GB RAM available for containers
 
 ## Quick Start (One-Line Deploy)
@@ -46,10 +46,10 @@ curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh
 
 执行后会自动完成：
 
-- 在 `~/.streamer-helper/config.json` 生成标准 JSON 配置（不存在时）；
-- 用 **jq** 从 `config.json` 读取并生成 `~/.streamer-helper/.docker-env` 供 compose 使用；
+- 在 `~/.streamer-helper/settings.json` 生成标准 JSON 配置（不存在时）；
+- 用 **jq** 从 `settings.json` 读取并生成 `~/.streamer-helper/.docker-env` 供 compose 使用；
 - 下载并启动 `docker-compose.prod.yml` 中的服务；
-- 后端容器挂载 `config.json`，启动时自动执行数据库迁移再启动应用。
+- 后端容器挂载 `settings.json`，启动时自动执行数据库迁移再启动应用。
 
 **重要**：数据库密码仅在 Postgres 首次初始化时生效（写入数据卷）。之后重启或再次部署时**不要**在脚本里对服务做 `down`，以免用新 env 重建容器导致与卷内密码不一致。启动/重启请始终使用：`docker compose -f ~/.streamer-helper/docker-compose.yml --env-file ~/.streamer-helper/.docker-env up -d`。若曾误操作导致密码认证失败，可执行一次 `docker compose -f ... down -v` 后重新运行本脚本（会清空数据库）。
 
@@ -60,8 +60,8 @@ curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh
 export APP_KEYS=your-secret-key-here       # 覆盖默认生成的 app.keys
 export HTTP_PORT=8080                      # Nginx 对外暴露的 HTTP 端口
 export HTTPS_PORT=8443                     # Nginx 对外暴露的 HTTPS 端口
-export TYPEORM_PASSWORD=your-db-password   # 数据库密码（会写入 config.json）
-export S3_SECRET_KEY=your-minio-password   # MinIO 密码（会写入 config.json）
+export TYPEORM_PASSWORD=your-db-password   # 数据库密码（会写入 settings.json）
+export S3_SECRET_KEY=your-minio-password   # MinIO 密码（会写入 settings.json）
 
 curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh | bash
 ```
@@ -70,11 +70,11 @@ curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_KEYS` | *(随机生成)* | 应用签名密钥，会写入 `config.json` |
+| `APP_KEYS` | *(随机生成)* | 应用签名密钥，会写入 `settings.json` |
 | `HTTP_PORT` | `80` | Nginx 对外 HTTP 端口 |
 | `HTTPS_PORT` | `443` | Nginx 对外 HTTPS 端口 |
-| `TYPEORM_PASSWORD` | *(随机生成)* | PostgreSQL 密码，会写入 `config.json` |
-| `S3_SECRET_KEY` | *(随机生成)* | MinIO 密码，会写入 `config.json` |
+| `TYPEORM_PASSWORD` | *(随机生成)* | PostgreSQL 密码，会写入 `settings.json` |
+| `S3_SECRET_KEY` | *(随机生成)* | MinIO 密码，会写入 `settings.json` |
 | `STREAMER_HELPER_CONFIG_DIR` | `$HOME/.streamer-helper` | 配置目录路径 |
 
 ---
@@ -87,14 +87,29 @@ curl -fsSL https://raw.githubusercontent.com/StreamerHelper/infra/main/deploy.sh
 # Build and push all images to Docker Hub
 ./build-and-push.sh v1.0.0
 
+# Build without pushing (for testing)
+./build-and-push.sh v1.0.0 --skip-push
+
 # Or just push latest
 ./build-and-push.sh
 ```
 
 Images will be pushed to:
-- `docker.io/umuoy1/streamerhelper-backend:latest`
-- `docker.io/umuoy1/streamerhelper-frontend:latest`
-- `docker.io/umuoy1/streamerhelper-nginx:latest`
+- `docker.io/streamerhelper/backend:latest`
+- `docker.io/streamerhelper/frontend:latest`
+- `docker.io/streamerhelper/nginx:latest`
+
+### CI/CD
+
+This repository uses GitHub Actions to automatically build and push Docker images:
+
+- **Trigger**: Push a tag starting with `v` (e.g., `v1.0.0`)
+- **Manual**: Use the "workflow_dispatch" event in GitHub Actions UI
+
+Required GitHub Secrets:
+- `DOCKERHUB_USERNAME` - Docker Hub username
+- `DOCKERHUB_TOKEN` - Docker Hub access token
+- `GH_PAT` (optional) - GitHub Personal Access Token for private repos
 
 ### Local Development
 
@@ -163,11 +178,12 @@ After starting services, create the required bucket:
 
 ## Configuration
 
-### Config file (config.json)
+### Config file (settings.json)
 
-- **路径**：`~/.streamer-helper/config.json`（可通过环境变量 `STREAMER_HELPER_CONFIG_DIR` 或 deploy 生成的 `CONFIG_DIR` 覆盖）
+- **路径**：`~/.streamer-helper/settings.json`（可通过环境变量 `STREAMER_HELPER_CONFIG_DIR` 或 deploy 生成的 `CONFIG_DIR` 覆盖）
 - **格式**：标准 JSON，便于编辑器与脚本（如 jq）解析。
-- **Schema**：[config.schema.json](./config.schema.json) 可供 IDE 校验与补全。
+- **示例**：[settings.example.json](./settings.example.json)
+- **Schema**：[settings.schema.json](./settings.schema.json) 可供 IDE 校验与补全。
 - **注意**：`database.password` 仅在首次创建 Postgres 数据卷时生效；之后修改该字段不会改变已存在数据库的密码，需先 `down -v` 再重新部署（会清空数据）或自行在库内修改 postgres 用户密码。
 
 ### Environment Variables

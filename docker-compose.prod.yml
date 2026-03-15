@@ -69,7 +69,7 @@ services:
       TYPEORM_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
       TYPEORM_DATABASE: ${TYPEORM_DATABASE:-streamerhelper}
     volumes:
-      - ${CONFIG_DIR}/config.json:/app/config/config.json:ro
+      - ${CONFIG_DIR}/settings.json:/app/config/settings.json:ro
       - backend_logs:/app/logs
       - backend_temp:/app/temp
     depends_on:
