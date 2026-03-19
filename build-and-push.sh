@@ -7,24 +7,24 @@
 #  Examples:                                                  #
 #    ./build-and-push.sh v0.0.2                               #
 #    ./build-and-push.sh v0.0.2 --no-cache                    #
-#    ./build-and-push.sh latest                               #
+#    ./build-and-push.sh --skip-push                          #
 #=============================================================#
 
 set -e
 
 # Configuration
-VERSION=${1:-latest}
 REGISTRY=${DOCKER_REGISTRY:-docker.io}
 ORG=${DOCKER_ORG:-umuoy1}
 IMAGE_PREFIX=${IMAGE_PREFIX:-streamerhelper}
+VERSION="latest"
 NO_CACHE=""
+SKIP_PUSH=""
 
 # Script directory (for relative paths)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Parse options
-shift 2>/dev/null || true
+# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cache)
@@ -48,13 +48,23 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Environment variables:"
             echo "  DOCKER_REGISTRY   Docker registry (default: docker.io)"
-            echo "  DOCKER_ORG        Docker org/username (default: streamerhelper)"
+            echo "  DOCKER_ORG        Docker org/username (default: umuoy1)"
             echo "  IMAGE_PREFIX      Image name prefix (default: streamerhelper)"
+            echo ""
+            echo "Examples:"
+            echo "  ./build-and-push.sh v1.0.0"
+            echo "  ./build-and-push.sh v1.0.0 --no-cache"
+            echo "  ./build-and-push.sh --skip-push"
             exit 0
             ;;
-        *)
+        -*)
             echo "Unknown option: $1"
             exit 1
+            ;;
+        *)
+            # Positional argument - version
+            VERSION=$1
+            shift
             ;;
     esac
 done
@@ -151,7 +161,6 @@ build_and_push() {
 # Note: Dockerfiles are in infra/, but build context is the respective app directory
 build_and_push "backend" "$SCRIPT_DIR/Dockerfile.backend" "$BACKEND_DIR"
 build_and_push "frontend" "$SCRIPT_DIR/Dockerfile.frontend" "$FRONTEND_DIR"
-build_and_push "nginx" "$SCRIPT_DIR/Dockerfile.nginx" "$SCRIPT_DIR"
 
 # Done
 echo "╔═══════════════════════════════════════════════════════════╗"
@@ -160,7 +169,6 @@ echo "╠═══════════════════════�
 echo "║  Images built:                                            ║"
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-backend:$VERSION         "
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-frontend:$VERSION        "
-echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-nginx:$VERSION           "
 if [ -z "${SKIP_PUSH:-}" ]; then
 echo "║                                                           ║"
 echo "║  Images pushed to registry                                ║"

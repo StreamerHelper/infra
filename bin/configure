@@ -1,0 +1,441 @@
+#!/usr/bin/env node
+
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
+import inquirer from 'inquirer';
+import chalk from 'chalk';
+
+const CONFIG_DIR = process.env.STREAMER_HELPER_CONFIG_DIR || path.join(os.homedir(), '.streamer-helper');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'settings.json');
+
+const DEFAULT_CONFIG = {
+  app: {
+    port: 7001,
+    keys: '',
+    nodeEnv: 'production'
+  },
+  http: {
+    port: 80,
+    httpsPort: 443
+  },
+  database: {
+    host: 'postgres',
+    port: 5432,
+    username: 'postgres',
+    password: '',
+    database: 'streamerhelper',
+    ssl: false
+  },
+  redis: {
+    host: 'redis',
+    port: 6379,
+    password: '',
+    db: 0
+  },
+  s3: {
+    endpoint: 'http://minio:9000',
+    region: 'us-east-1',
+    accessKey: 'minioadmin',
+    secretKey: '',
+    bucket: 'streamerhelper-archive'
+  },
+  minio: {
+    consolePort: 9001,
+    apiPort: 9000
+  },
+  recorder: {
+    segmentDuration: 10,
+    cacheMaxSegments: 3,
+    heartbeatInterval: 5,
+    heartbeatTimeout: 10,
+    maxRecordingTime: 86400
+  },
+  poller: {
+    checkInterval: 60,
+    totalInstances: 1,
+    concurrency: 5
+  },
+  upload: {
+    defaultTid: 171,
+    defaultTitleTemplate: '{streamerName}的直播录像 {date}'
+  }
+};
+
+function generateSecret(length = 32) {
+  return crypto.randomBytes(length).toString('hex').slice(0, length);
+}
+
+function loadConfig() {
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+    } catch (e) {
+      console.error(chalk.red('Failed to parse config file:', e.message));
+      return null;
+    }
+  }
+  return null;
+}
+
+function saveConfig(config) {
+  if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  fs.chmodSync(CONFIG_FILE, 0o600);
+}
+
+function printBanner() {
+  console.log('');
+  console.log(chalk.cyan('╔═══════════════════════════════════════════════════════════╗'));
+  console.log(chalk.cyan('║') + chalk.white.bold('           StreamerHelper Configuration Tool               ') + chalk.cyan('║'));
+  console.log(chalk.cyan('╚═══════════════════════════════════════════════════════════╝'));
+  console.log('');
+}
+
+async function initConfig() {
+  printBanner();
+  
+  const existingConfig = loadConfig();
+  if (existingConfig) {
+    const { overwrite } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'overwrite',
+      message: chalk.yellow(`Config already exists at ${CONFIG_FILE}. Overwrite?`),
+      default: false
+    }]);
+    if (!overwrite) {
+      console.log(chalk.blue('Keeping existing configuration.'));
+      return;
+    }
+  }
+
+  console.log(chalk.blue('Let\'s configure StreamerHelper!\n'));
+
+  // HTTP Settings
+  console.log(chalk.cyan.bold('\n📡 HTTP Settings'));
+  const httpAnswers = await inquirer.prompt([
+    {
+      type: 'number',
+      name: 'httpPort',
+      message: 'HTTP port:',
+      default: 80
+    },
+    {
+      type: 'number',
+      name: 'httpsPort',
+      message: 'HTTPS port:',
+      default: 443
+    }
+  ]);
+
+  // Database Settings
+  console.log(chalk.cyan.bold('\n🗄️  Database Settings'));
+  const dbAnswers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'dbUsername',
+      message: 'Database username:',
+      default: 'postgres'
+    },
+    {
+      type: 'password',
+      name: 'dbPassword',
+      message: 'Database password (leave empty to auto-generate):',
+      mask: '*'
+    },
+    {
+      type: 'input',
+      name: 'dbName',
+      message: 'Database name:',
+      default: 'streamerhelper'
+    }
+  ]);
+
+  // MinIO Settings
+  console.log(chalk.cyan.bold('\n📦 MinIO (S3) Settings'));
+  const minioAnswers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 's3AccessKey',
+      message: 'S3 Access Key:',
+      default: 'minioadmin'
+    },
+    {
+      type: 'password',
+      name: 's3SecretKey',
+      message: 'S3 Secret Key (leave empty to auto-generate):',
+      mask: '*'
+    },
+    {
+      type: 'input',
+      name: 's3Bucket',
+      message: 'S3 Bucket name:',
+      default: 'streamerhelper-archive'
+    },
+    {
+      type: 'number',
+      name: 'minioConsolePort',
+      message: 'MinIO Console port:',
+      default: 9001
+    }
+  ]);
+
+  // Advanced Settings
+  console.log(chalk.cyan.bold('\n⚙️  Advanced Settings'));
+  const { configureAdvanced } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'configureAdvanced',
+    message: 'Configure advanced settings (recorder, poller, upload)?',
+    default: false
+  }]);
+
+  let advancedConfig = {};
+  if (configureAdvanced) {
+    const recorderAnswers = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'segmentDuration',
+        message: 'Segment duration (seconds):',
+        default: 10
+      },
+      {
+        type: 'number',
+        name: 'maxRecordingTime',
+        message: 'Max recording time (seconds):',
+        default: 86400
+      }
+    ]);
+
+    const pollerAnswers = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'checkInterval',
+        message: 'Poll check interval (seconds):',
+        default: 60
+      },
+      {
+        type: 'number',
+        name: 'concurrency',
+        message: 'Poller concurrency:',
+        default: 5
+      }
+    ]);
+
+    advancedConfig = {
+      recorder: {
+        ...DEFAULT_CONFIG.recorder,
+        segmentDuration: recorderAnswers.segmentDuration,
+        maxRecordingTime: recorderAnswers.maxRecordingTime
+      },
+      poller: {
+        ...DEFAULT_CONFIG.poller,
+        checkInterval: pollerAnswers.checkInterval,
+        concurrency: pollerAnswers.concurrency
+      }
+    };
+  }
+
+  // Build config
+  const config = {
+    ...DEFAULT_CONFIG,
+    app: {
+      ...DEFAULT_CONFIG.app,
+      keys: generateSecret(64)
+    },
+    http: {
+      port: httpAnswers.httpPort,
+      httpsPort: httpAnswers.httpsPort
+    },
+    database: {
+      ...DEFAULT_CONFIG.database,
+      username: dbAnswers.dbUsername,
+      password: dbAnswers.dbPassword || generateSecret(16),
+      database: dbAnswers.dbName
+    },
+    s3: {
+      ...DEFAULT_CONFIG.s3,
+      accessKey: minioAnswers.s3AccessKey,
+      secretKey: minioAnswers.s3SecretKey || generateSecret(16),
+      bucket: minioAnswers.s3Bucket
+    },
+    minio: {
+      consolePort: minioAnswers.minioConsolePort,
+      apiPort: 9000
+    },
+    ...advancedConfig
+  };
+
+  saveConfig(config);
+
+  console.log(chalk.green.bold('\n✅ Configuration saved!'));
+  console.log(chalk.gray(`   Location: ${CONFIG_FILE}`));
+  console.log(chalk.blue('\n   Next steps:'));
+  console.log(chalk.blue('     ./bin/control infra up   # Start databases'));
+  console.log(chalk.blue('     ./bin/control migrate    # Run migrations'));
+  console.log(chalk.blue('     ./bin/control app up     # Start application'));
+  console.log('');
+}
+
+async function editConfig() {
+  printBanner();
+  
+  const config = loadConfig();
+  if (!config) {
+    console.log(chalk.red('No configuration found. Run ./bin/configure init first.'));
+    process.exit(1);
+  }
+
+  const { section } = await inquirer.prompt([{
+    type: 'list',
+    name: 'section',
+    message: 'Which section do you want to edit?',
+    choices: [
+      { name: '📡 HTTP Settings', value: 'http' },
+      { name: '🗄️  Database Settings', value: 'database' },
+      { name: '📦 MinIO (S3) Settings', value: 's3' },
+      { name: '🔴 Recorder Settings', value: 'recorder' },
+      { name: '🔄 Poller Settings', value: 'poller' },
+      { name: '📤 Upload Settings', value: 'upload' },
+      new inquirer.Separator(),
+      { name: '❌ Cancel', value: 'cancel' }
+    ]
+  }]);
+
+  if (section === 'cancel') {
+    return;
+  }
+
+  let updates = {};
+
+  switch (section) {
+    case 'http':
+      updates = await inquirer.prompt([
+        { type: 'number', name: 'port', message: 'HTTP port:', default: config.http?.port || 80 },
+        { type: 'number', name: 'httpsPort', message: 'HTTPS port:', default: config.http?.httpsPort || 443 }
+      ]);
+      config.http = { ...config.http, ...updates };
+      break;
+
+    case 'database':
+      updates = await inquirer.prompt([
+        { type: 'input', name: 'username', message: 'Username:', default: config.database.username },
+        { type: 'password', name: 'password', message: 'Password (empty to keep current):', mask: '*' },
+        { type: 'input', name: 'database', message: 'Database name:', default: config.database.database }
+      ]);
+      config.database = { 
+        ...config.database, 
+        username: updates.username,
+        password: updates.password || config.database.password,
+        database: updates.database
+      };
+      break;
+
+    case 's3':
+      updates = await inquirer.prompt([
+        { type: 'input', name: 'accessKey', message: 'Access Key:', default: config.s3.accessKey },
+        { type: 'password', name: 'secretKey', message: 'Secret Key (empty to keep current):', mask: '*' },
+        { type: 'input', name: 'bucket', message: 'Bucket:', default: config.s3.bucket }
+      ]);
+      config.s3 = {
+        ...config.s3,
+        accessKey: updates.accessKey,
+        secretKey: updates.secretKey || config.s3.secretKey,
+        bucket: updates.bucket
+      };
+      break;
+
+    case 'recorder':
+      updates = await inquirer.prompt([
+        { type: 'number', name: 'segmentDuration', message: 'Segment duration (s):', default: config.recorder.segmentDuration },
+        { type: 'number', name: 'maxRecordingTime', message: 'Max recording time (s):', default: config.recorder.maxRecordingTime }
+      ]);
+      config.recorder = { ...config.recorder, ...updates };
+      break;
+
+    case 'poller':
+      updates = await inquirer.prompt([
+        { type: 'number', name: 'checkInterval', message: 'Check interval (s):', default: config.poller.checkInterval },
+        { type: 'number', name: 'concurrency', message: 'Concurrency:', default: config.poller.concurrency }
+      ]);
+      config.poller = { ...config.poller, ...updates };
+      break;
+
+    case 'upload':
+      updates = await inquirer.prompt([
+        { type: 'number', name: 'defaultTid', message: 'Default TID:', default: config.upload.defaultTid },
+        { type: 'input', name: 'defaultTitleTemplate', message: 'Title template:', default: config.upload.defaultTitleTemplate }
+      ]);
+      config.upload = { ...config.upload, ...updates };
+      break;
+  }
+
+  saveConfig(config);
+  console.log(chalk.green('\n✅ Configuration updated!'));
+  console.log(chalk.yellow('   Note: Run ./bin/control restart to apply changes.'));
+}
+
+function showConfig() {
+  printBanner();
+  
+  const config = loadConfig();
+  if (!config) {
+    console.log(chalk.red('No configuration found. Run ./bin/configure init first.'));
+    process.exit(1);
+  }
+
+  // Mask sensitive data
+  const displayConfig = JSON.parse(JSON.stringify(config));
+  if (displayConfig.app?.keys) {
+    displayConfig.app.keys = '***' + displayConfig.app.keys.slice(-4);
+  }
+  if (displayConfig.database?.password) {
+    displayConfig.database.password = '***' + displayConfig.database.password.slice(-4);
+  }
+  if (displayConfig.s3?.secretKey) {
+    displayConfig.s3.secretKey = '***' + displayConfig.s3.secretKey.slice(-4);
+  }
+
+  console.log(chalk.gray(`Config location: ${CONFIG_FILE}\n`));
+  console.log(JSON.stringify(displayConfig, null, 2));
+  console.log('');
+}
+
+function printUsage() {
+  console.log(`
+${chalk.bold('Usage:')} ./bin/configure <command>
+
+${chalk.bold('Commands:')}
+  ${chalk.cyan('init')}    Initialize configuration interactively
+  ${chalk.cyan('edit')}    Edit existing configuration
+  ${chalk.cyan('show')}    Show current configuration (passwords masked)
+
+${chalk.bold('Examples:')}
+  ./bin/configure init     # First-time setup
+  ./bin/configure edit     # Modify settings
+  ./bin/configure show     # View current config
+`);
+}
+
+// Main
+const command = process.argv[2];
+
+switch (command) {
+  case 'init':
+    initConfig();
+    break;
+  case 'edit':
+    editConfig();
+    break;
+  case 'show':
+    showConfig();
+    break;
+  default:
+    printUsage();
+    if (command && command !== 'help' && command !== '--help' && command !== '-h') {
+      console.log(chalk.red(`Unknown command: ${command}`));
+      process.exit(1);
+    }
+}

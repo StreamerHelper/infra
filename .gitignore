@@ -1,4 +1,10 @@
 # Local generated files
 .env
 .env.*
+settings.json
+
+# Dependencies
+node_modules/
+
+# Old compose files (migrated to infra/app/dev)
 docker-compose.streamer.yml

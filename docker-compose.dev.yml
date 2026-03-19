@@ -1,0 +1,16 @@
+# 本地开发构建覆盖
+# 使用: ./bin/control dev up
+# 与 docker-compose.app.yml 配合使用
+
+services:
+  backend:
+    image: infra-backend:local
+    build:
+      context: ../web-server
+      dockerfile: ../infra/Dockerfile.backend
+
+  frontend:
+    image: infra-frontend:local
+    build:
+      context: ../web
+      dockerfile: ../infra/Dockerfile.frontend

@@ -4,6 +4,10 @@
     "keys": "YOUR_APP_KEYS_HERE",
     "nodeEnv": "production"
   },
+  "http": {
+    "port": 80,
+    "httpsPort": 443
+  },
   "database": {
     "host": "postgres",
     "port": 5432,
@@ -24,6 +28,10 @@
     "accessKey": "minioadmin",
     "secretKey": "YOUR_S3_SECRET_HERE",
     "bucket": "streamerhelper-archive"
+  },
+  "minio": {
+    "consolePort": 9001,
+    "apiPort": 9000
   },
   "recorder": {
     "segmentDuration": 10,
