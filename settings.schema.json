@@ -37,7 +37,6 @@
       "type": "object",
       "properties": {
         "endpoint": { "type": "string", "description": "内部 S3/MinIO 访问地址（Docker 网络内）" },
-        "publicEndpoint": { "type": "string", "description": "公网 S3/MinIO 访问地址（前端可访问）" },
         "region": { "type": "string" },
         "accessKey": { "type": "string" },
         "secretKey": { "type": "string" },

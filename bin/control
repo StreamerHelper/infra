@@ -78,17 +78,11 @@ generate_env_file() {
     local s3_secret_key=$(jq -r '.s3.secretKey // empty' "$CONFIG_FILE")
     local s3_bucket=$(jq -r '.s3.bucket // "streamerhelper-archive"' "$CONFIG_FILE")
     local s3_region=$(jq -r '.s3.region // "us-east-1"' "$CONFIG_FILE")
-    local s3_public_endpoint=$(jq -r '.s3.publicEndpoint // empty' "$CONFIG_FILE")
     local http_port=$(jq -r '.http.port // 80' "$CONFIG_FILE")
     local https_port=$(jq -r '.http.httpsPort // 443' "$CONFIG_FILE")
     local minio_console_port=$(jq -r '.minio.consolePort // 9001' "$CONFIG_FILE")
     local minio_api_port=$(jq -r '.minio.apiPort // 9000' "$CONFIG_FILE")
     local redis_password=$(jq -r '.redis.password // ""' "$CONFIG_FILE")
-
-    # Auto-generate publicEndpoint if not set
-    if [ -z "$s3_public_endpoint" ]; then
-        s3_public_endpoint="http://localhost:${minio_api_port}"
-    fi
 
     if [ -z "$app_keys" ] || [ -z "$db_password" ] || [ -z "$s3_secret_key" ]; then
         log_error "Invalid config: missing app.keys, database.password, or s3.secretKey"
@@ -107,7 +101,6 @@ S3_ACCESS_KEY=${s3_access_key}
 S3_SECRET_KEY=${s3_secret_key}
 S3_BUCKET=${s3_bucket}
 S3_REGION=${s3_region}
-S3_PUBLIC_ENDPOINT=${s3_public_endpoint}
 REDIS_PASSWORD=${redis_password}
 HTTP_PORT=${http_port}
 HTTPS_PORT=${https_port}
