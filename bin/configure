@@ -14,7 +14,8 @@ const DEFAULT_CONFIG = {
   app: {
     port: 7001,
     keys: '',
-    nodeEnv: 'production'
+    nodeEnv: 'production',
+    timezone: 'Asia/Shanghai'
   },
   http: {
     port: 80,
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG = {
   },
   s3: {
     endpoint: 'http://minio:9000',
+    publicEndpoint: 'http://localhost:9000',
     region: 'us-east-1',
     accessKey: 'minioadmin',
     secretKey: '',
@@ -128,6 +130,12 @@ async function initConfig() {
       name: 'httpsPort',
       message: 'HTTPS port:',
       default: 443
+    },
+    {
+      type: 'input',
+      name: 'timezone',
+      message: 'Container timezone:',
+      default: 'Asia/Shanghai'
     }
   ]);
 
@@ -157,6 +165,18 @@ async function initConfig() {
   // MinIO Settings
   console.log(chalk.cyan.bold('\n📦 MinIO (S3) Settings'));
   const minioAnswers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 's3Endpoint',
+      message: 'S3 Internal Endpoint (for container):',
+      default: 'http://minio:9000'
+    },
+    {
+      type: 'input',
+      name: 's3PublicEndpoint',
+      message: 'S3 Public Endpoint (for browser access):',
+      default: 'http://localhost:9000'
+    },
     {
       type: 'input',
       name: 's3AccessKey',
@@ -249,7 +269,8 @@ async function initConfig() {
     ...DEFAULT_CONFIG,
     app: {
       ...DEFAULT_CONFIG.app,
-      keys: generateSecret(64)
+      keys: generateSecret(64),
+      timezone: httpAnswers.timezone
     },
     http: {
       port: httpAnswers.httpPort,
@@ -263,6 +284,8 @@ async function initConfig() {
     },
     s3: {
       ...DEFAULT_CONFIG.s3,
+      endpoint: minioAnswers.s3Endpoint,
+      publicEndpoint: minioAnswers.s3PublicEndpoint,
       accessKey: minioAnswers.s3AccessKey,
       secretKey: minioAnswers.s3SecretKey || generateSecret(16),
       bucket: minioAnswers.s3Bucket
@@ -300,6 +323,7 @@ async function editConfig() {
     message: 'Which section do you want to edit?',
     choices: [
       { name: '📡 HTTP Settings', value: 'http' },
+      { name: '🕐 Timezone', value: 'timezone' },
       { name: '🗄️  Database Settings', value: 'database' },
       { name: '📦 MinIO (S3) Settings', value: 's3' },
       { name: '🔴 Recorder Settings', value: 'recorder' },
@@ -325,6 +349,13 @@ async function editConfig() {
       config.http = { ...config.http, ...updates };
       break;
 
+    case 'timezone':
+      updates = await inquirer.prompt([
+        { type: 'input', name: 'timezone', message: 'Container timezone:', default: config.app?.timezone || 'Asia/Shanghai' }
+      ]);
+      config.app = { ...config.app, timezone: updates.timezone };
+      break;
+
     case 'database':
       updates = await inquirer.prompt([
         { type: 'input', name: 'username', message: 'Username:', default: config.database.username },
@@ -341,12 +372,16 @@ async function editConfig() {
 
     case 's3':
       updates = await inquirer.prompt([
+        { type: 'input', name: 'endpoint', message: 'Internal Endpoint:', default: config.s3.endpoint },
+        { type: 'input', name: 'publicEndpoint', message: 'Public Endpoint:', default: config.s3.publicEndpoint },
         { type: 'input', name: 'accessKey', message: 'Access Key:', default: config.s3.accessKey },
         { type: 'password', name: 'secretKey', message: 'Secret Key (empty to keep current):', mask: '*' },
         { type: 'input', name: 'bucket', message: 'Bucket:', default: config.s3.bucket },
       ]);
       config.s3 = {
         ...config.s3,
+        endpoint: updates.endpoint,
+        publicEndpoint: updates.publicEndpoint,
         accessKey: updates.accessKey,
         secretKey: updates.secretKey || config.s3.secretKey,
         bucket: updates.bucket,

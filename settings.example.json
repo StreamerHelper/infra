@@ -2,7 +2,8 @@
   "app": {
     "port": 7001,
     "keys": "YOUR_APP_KEYS_HERE",
-    "nodeEnv": "production"
+    "nodeEnv": "production",
+    "timezone": "Asia/Shanghai"
   },
   "http": {
     "port": 80,
@@ -24,6 +25,7 @@
   },
   "s3": {
     "endpoint": "http://minio:9000",
+    "publicEndpoint": "http://localhost:9000",
     "region": "us-east-1",
     "accessKey": "minioadmin",
     "secretKey": "YOUR_S3_SECRET_HERE",

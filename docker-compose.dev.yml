@@ -14,3 +14,28 @@ services:
     build:
       context: ../web
       dockerfile: ../infra/Dockerfile.frontend
+
+  # pgAdmin - PostgreSQL 管理工具（仅开发环境）
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: streamer-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ${CONFIG_DIR:-~/.streamer-helper}/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    networks:
+      - streamer-network
+
+networks:
+  streamer-network:
+    external: true
+
+volumes:
+  pgadmin_data:

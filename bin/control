@@ -74,6 +74,8 @@ generate_env_file() {
     local db_password=$(jq -r '.database.password // empty' "$CONFIG_FILE")
     local db_username=$(jq -r '.database.username // "postgres"' "$CONFIG_FILE")
     local db_name=$(jq -r '.database.database // "streamerhelper"' "$CONFIG_FILE")
+    local s3_endpoint=$(jq -r '.s3.endpoint // "http://minio:9000"' "$CONFIG_FILE")
+    local s3_public_endpoint=$(jq -r '.s3.publicEndpoint // "http://localhost:9000"' "$CONFIG_FILE")
     local s3_access_key=$(jq -r '.s3.accessKey // "minioadmin"' "$CONFIG_FILE")
     local s3_secret_key=$(jq -r '.s3.secretKey // empty' "$CONFIG_FILE")
     local s3_bucket=$(jq -r '.s3.bucket // "streamerhelper-archive"' "$CONFIG_FILE")
@@ -83,6 +85,7 @@ generate_env_file() {
     local minio_console_port=$(jq -r '.minio.consolePort // 9001' "$CONFIG_FILE")
     local minio_api_port=$(jq -r '.minio.apiPort // 9000' "$CONFIG_FILE")
     local redis_password=$(jq -r '.redis.password // ""' "$CONFIG_FILE")
+    local timezone=$(jq -r '.app.timezone // "Asia/Shanghai"' "$CONFIG_FILE")
 
     if [ -z "$app_keys" ] || [ -z "$db_password" ] || [ -z "$s3_secret_key" ]; then
         log_error "Invalid config: missing app.keys, database.password, or s3.secretKey"
@@ -93,10 +96,13 @@ generate_env_file() {
 
     cat > "$ENV_FILE" << EOF
 # Auto-generated from settings.json - DO NOT EDIT DIRECTLY
+TZ=${timezone}
 APP_KEYS=${app_keys}
 TYPEORM_USERNAME=${db_username}
 TYPEORM_PASSWORD=${db_password}
 TYPEORM_DATABASE=${db_name}
+S3_ENDPOINT=${s3_endpoint}
+S3_PUBLIC_ENDPOINT=${s3_public_endpoint}
 S3_ACCESS_KEY=${s3_access_key}
 S3_SECRET_KEY=${s3_secret_key}
 S3_BUCKET=${s3_bucket}
@@ -110,6 +116,34 @@ CONFIG_DIR=${CONFIG_DIR}
 EOF
 
     chmod 600 "$ENV_FILE"
+}
+
+# Generate pgAdmin configuration files
+generate_pgadmin_config() {
+    local db_host="postgres"
+    local db_port=$(jq -r '.database.port // 5432' "$CONFIG_FILE")
+    local db_username=$(jq -r '.database.username // "postgres"' "$CONFIG_FILE")
+    local db_name=$(jq -r '.database.database // "streamerhelper"' "$CONFIG_FILE")
+
+    local pgadmin_dir="$CONFIG_DIR/pgadmin"
+    mkdir -p "$pgadmin_dir"
+
+    # Generate servers.json
+    cat > "$pgadmin_dir/servers.json" << EOF
+{
+  "Servers": {
+    "1": {
+      "Name": "StreamerHelper PostgreSQL",
+      "Group": "Servers",
+      "Host": "${db_host}",
+      "Port": ${db_port},
+      "MaintenanceDB": "${db_name}",
+      "Username": "${db_username}",
+      "SSLMode": "prefer"
+    }
+  }
+}
+EOF
 }
 
 # Sync PostgreSQL password
@@ -161,6 +195,29 @@ wait_for_healthy() {
     return 1
 }
 
+# Ensure MinIO bucket exists
+ensure_minio_bucket() {
+    local bucket=$(jq -r '.s3.bucket // "streamerhelper-archive"' "$CONFIG_FILE")
+    local access_key=$(jq -r '.s3.accessKey // "minioadmin"' "$CONFIG_FILE")
+    local secret_key=$(jq -r '.s3.secretKey' "$CONFIG_FILE")
+
+    log_step "Ensuring MinIO bucket exists: $bucket"
+
+    # Configure mc alias inside container
+    docker exec streamer-minio mc alias set local http://localhost:9000 "$access_key" "$secret_key" > /dev/null 2>&1
+
+    # Create bucket if not exists
+    if docker exec streamer-minio mc ls local/"$bucket" > /dev/null 2>&1; then
+        log_info "Bucket '$bucket' already exists"
+    else
+        if docker exec streamer-minio mc mb local/"$bucket" > /dev/null 2>&1; then
+            log_info "Bucket '$bucket' created"
+        else
+            log_warn "Failed to create bucket '$bucket'"
+        fi
+    fi
+}
+
 #=============================================================#
 #  Infrastructure Commands                                    #
 #=============================================================#
@@ -183,6 +240,7 @@ do_infra_up() {
     wait_for_healthy "streamer-minio" 60 || { log_error "MinIO failed to start"; exit 1; }
 
     sync_postgres_password
+    ensure_minio_bucket
 
     log_info "Infrastructure services are ready!"
     echo ""
@@ -348,6 +406,7 @@ do_dev_up() {
     check_dependencies
     check_config
     generate_env_file
+    generate_pgadmin_config
 
     # Start infra if not running
     if ! docker ps --format '{{.Names}}' | grep -q "streamer-postgres"; then
@@ -383,8 +442,20 @@ do_dev_up() {
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║${NC}  Application:   http://localhost:${http_port}"
     echo -e "${GREEN}║${NC}  MinIO Console: http://localhost:${minio_port}"
+    echo -e "${GREEN}║${NC}  pgAdmin:       http://localhost:5050"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
+}
+
+do_dev_down() {
+    log_step "Stopping dev environment..."
+    docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" down 2>/dev/null || true
+    log_info "Dev environment stopped."
+}
+
+do_dev_restart() {
+    do_dev_down
+    do_dev_up
 }
 
 #=============================================================#
@@ -435,7 +506,9 @@ print_usage() {
     echo "  logs [service] Show logs (e.g., logs backend)"
     echo ""
     echo -e "${CYAN}Development:${NC}"
-    echo "  dev up         Build from source and start"
+    echo "  dev up         Build from source and start (includes pgAdmin)"
+    echo "  dev down       Stop dev environment"
+    echo "  dev restart    Restart dev environment"
     echo "  dev build [s]  Build images (optionally specify service)"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
@@ -481,8 +554,10 @@ case "${1:-}" in
     dev)
         case "${2:-}" in
             up) do_dev_up ;;
+            down) do_dev_down ;;
+            restart) do_dev_restart ;;
             build) do_dev_build "$3" ;;
-            *) log_error "Usage: ./bin/control dev [up|build]"; exit 1 ;;
+            *) log_error "Usage: ./bin/control dev [up|down|restart|build]"; exit 1 ;;
         esac
         ;;
     help|--help|-h|"")

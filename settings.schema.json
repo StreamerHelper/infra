@@ -10,7 +10,8 @@
       "properties": {
         "port": { "type": "integer", "default": 7001 },
         "keys": { "type": "string", "description": "Session/cookie signing secret" },
-        "nodeEnv": { "enum": ["development", "production", "test"] }
+        "nodeEnv": { "enum": ["development", "production", "test"] },
+        "timezone": { "type": "string", "default": "Asia/Shanghai", "description": "容器时区（IANA 格式）" }
       }
     },
     "database": {
@@ -36,7 +37,8 @@
     "s3": {
       "type": "object",
       "properties": {
-        "endpoint": { "type": "string", "description": "内部 S3/MinIO 访问地址（Docker 网络内）" },
+        "endpoint": { "type": "string", "description": "内部 S3/MinIO 访问地址（Docker 网络内，用于上传下载）" },
+        "publicEndpoint": { "type": "string", "description": "外部 S3/MinIO 访问地址（浏览器可访问，用于生成播放 URL）" },
         "region": { "type": "string" },
         "accessKey": { "type": "string" },
         "secretKey": { "type": "string" },
