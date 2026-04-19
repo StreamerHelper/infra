@@ -152,6 +152,11 @@ npm install
 | `recorder.maxRecordingTime` | 最大录制时长 (秒) | 86400 |
 | `poller.checkInterval` | 轮询间隔 (秒) | 60 |
 
+注意：
+- `http.port`、`http.httpsPort`、`minio.apiPort`、`minio.consolePort` 是宿主机暴露端口。
+- Docker 内部服务连接仍然固定使用 `postgres:5432`、`redis:6379`、`minio:9000`。
+- 后端容器内部监听端口固定为 `7001`。如需更改对外访问端口，请修改 `http.port`，不要修改 `app.port`。
+
 ---
 
 ## 日常操作

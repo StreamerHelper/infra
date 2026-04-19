@@ -12,16 +12,17 @@ services:
       NODE_ENV: production
       TZ: ${TZ:-Asia/Shanghai}
       # App
+      APP_PORT: ${APP_PORT:-7001}
       APP_KEYS: ${APP_KEYS:-streamer-helper-secret-key}
       # Database
-      TYPEORM_HOST: postgres
-      TYPEORM_PORT: 5432
+      TYPEORM_HOST: ${TYPEORM_HOST:-postgres}
+      TYPEORM_PORT: ${TYPEORM_PORT:-5432}
       TYPEORM_USERNAME: ${TYPEORM_USERNAME:-postgres}
       TYPEORM_PASSWORD: ${TYPEORM_PASSWORD:-postgres}
       TYPEORM_DATABASE: ${TYPEORM_DATABASE:-streamerhelper}
       # Redis
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       # S3/MinIO
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
@@ -35,7 +36,7 @@ services:
       - backend_logs:/app/logs
       - backend_temp:/app/temp
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "7001"]
+      test: ["CMD", "nc", "-z", "localhost", "${APP_PORT:-7001}"]
       interval: 10s
       timeout: 10s
       start_period: 60s

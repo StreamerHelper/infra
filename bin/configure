@@ -166,16 +166,28 @@ async function initConfig() {
   console.log(chalk.cyan.bold('\n📦 MinIO (S3) Settings'));
   const minioAnswers = await inquirer.prompt([
     {
+      type: 'number',
+      name: 'minioApiPort',
+      message: 'MinIO API port (host exposed port):',
+      default: 9000
+    },
+    {
+      type: 'number',
+      name: 'minioConsolePort',
+      message: 'MinIO Console port (host exposed port):',
+      default: 9001
+    },
+    {
       type: 'input',
       name: 's3Endpoint',
-      message: 'S3 Internal Endpoint (for container):',
+      message: 'S3 Internal Endpoint (for container, usually keep default):',
       default: 'http://minio:9000'
     },
     {
       type: 'input',
       name: 's3PublicEndpoint',
       message: 'S3 Public Endpoint (for browser access):',
-      default: 'http://localhost:9000'
+      default: (answers) => `http://localhost:${answers.minioApiPort || 9000}`
     },
     {
       type: 'input',
@@ -194,18 +206,6 @@ async function initConfig() {
       name: 's3Bucket',
       message: 'S3 Bucket name:',
       default: 'streamerhelper-archive'
-    },
-    {
-      type: 'number',
-      name: 'minioApiPort',
-      message: 'MinIO API port:',
-      default: 9000
-    },
-    {
-      type: 'number',
-      name: 'minioConsolePort',
-      message: 'MinIO Console port:',
-      default: 9001
     }
   ]);
 
@@ -371,9 +371,14 @@ async function editConfig() {
       break;
 
     case 's3':
+      const inferredPublicEndpoint =
+        config.s3.publicEndpoint === 'http://localhost:9000' &&
+        (config.minio?.apiPort || 9000) !== 9000
+          ? `http://localhost:${config.minio?.apiPort || 9000}`
+          : config.s3.publicEndpoint;
       updates = await inquirer.prompt([
-        { type: 'input', name: 'endpoint', message: 'Internal Endpoint:', default: config.s3.endpoint },
-        { type: 'input', name: 'publicEndpoint', message: 'Public Endpoint:', default: config.s3.publicEndpoint },
+        { type: 'input', name: 'endpoint', message: 'Internal Endpoint (for container):', default: config.s3.endpoint },
+        { type: 'input', name: 'publicEndpoint', message: 'Public Endpoint (for browser):', default: inferredPublicEndpoint },
         { type: 'input', name: 'accessKey', message: 'Access Key:', default: config.s3.accessKey },
         { type: 'password', name: 'secretKey', message: 'Secret Key (empty to keep current):', mask: '*' },
         { type: 'input', name: 'bucket', message: 'Bucket:', default: config.s3.bucket },

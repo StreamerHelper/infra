@@ -47,12 +47,14 @@ COPY --from=builder /app/docker-entrypoint.sh ./
 # Create required directories
 RUN mkdir -p logs temp config && chmod +x docker-entrypoint.sh
 
+ENV APP_PORT=7001
+
 # Expose port
 EXPOSE 7001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
-  CMD nc -z localhost 7001 || exit 1
+  CMD sh -c 'nc -z localhost "${APP_PORT:-7001}" || exit 1'
 
 # Start application
 ENTRYPOINT ["./docker-entrypoint.sh"]

@@ -117,6 +117,11 @@ npm install
 
 详见 [settings.example.json](./settings.example.json)。
 
+部署时请注意：
+- `http.port` / `httpsPort` / `minio.apiPort` / `minio.consolePort` 只影响宿主机暴露端口。
+- 容器内部仍通过 `postgres:5432`、`redis:6379`、`minio:9000` 互联。
+- 后端容器内部端口固定为 `7001`，对外访问端口由 Nginx 的 `http.port` 控制。
+
 ## 开发者指南
 
 ### 本地开发

@@ -37,6 +37,130 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
 
+is_local_host() {
+    case "${1:-}" in
+        ""|"localhost"|"127.0.0.1"|"0.0.0.0"|"::1")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+split_url() {
+    local url="${1:-}"
+    URL_SCHEME="http"
+    URL_HOST=""
+    URL_PORT=""
+    URL_PATH=""
+
+    local rest="$url"
+    if [[ "$rest" == *"://"* ]]; then
+        URL_SCHEME="${rest%%://*}"
+        rest="${rest#*://}"
+    fi
+
+    local host_port="${rest%%/*}"
+    if [[ "$rest" == */* ]]; then
+        URL_PATH="/${rest#*/}"
+    fi
+
+    if [[ "$host_port" == *":"* ]]; then
+        URL_HOST="${host_port%%:*}"
+        URL_PORT="${host_port##*:}"
+    else
+        URL_HOST="$host_port"
+    fi
+}
+
+build_url() {
+    local scheme="${1:-http}"
+    local host="$2"
+    local port="$3"
+    local path="$4"
+
+    printf '%s://%s' "$scheme" "$host"
+    if [ -n "$port" ]; then
+        printf ':%s' "$port"
+    fi
+    if [ -n "$path" ]; then
+        printf '%s' "$path"
+    fi
+}
+
+normalize_service_connection() {
+    local host="$1"
+    local port="$2"
+    local service_name="$3"
+    local default_port="$4"
+
+    if is_local_host "$host"; then
+        host="$service_name"
+    fi
+
+    if [ -z "$port" ]; then
+        port="$default_port"
+    fi
+
+    if [ "$host" = "$service_name" ] || [ "$host" = "streamer-$service_name" ]; then
+        port="$default_port"
+    fi
+
+    printf '%s %s' "$host" "$port"
+}
+
+normalize_internal_s3_endpoint() {
+    local endpoint="$1"
+    split_url "$endpoint"
+
+    local scheme="${URL_SCHEME:-http}"
+    local host="$URL_HOST"
+    local port="$URL_PORT"
+    local path="$URL_PATH"
+
+    if is_local_host "$host" || [ -z "$host" ] || [ "$host" = "minio" ] || [ "$host" = "streamer-minio" ]; then
+        host="minio"
+        port="9000"
+    fi
+
+    if [ -z "$port" ]; then
+        port="9000"
+    fi
+
+    if [ "$host" = "minio" ] || [ "$host" = "streamer-minio" ]; then
+        port="9000"
+    fi
+
+    build_url "$scheme" "$host" "$port" "$path"
+}
+
+normalize_public_s3_endpoint() {
+    local endpoint="$1"
+    local minio_api_port="$2"
+    split_url "$endpoint"
+
+    local scheme="${URL_SCHEME:-http}"
+    local host="$URL_HOST"
+    local port="$URL_PORT"
+    local path="$URL_PATH"
+
+    if [ -z "$host" ] || [ "$host" = "minio" ] || [ "$host" = "streamer-minio" ]; then
+        host="localhost"
+    fi
+
+    if [ -z "$port" ]; then
+        port="$minio_api_port"
+    fi
+
+    if { [ "$host" = "localhost" ] || [ "$host" = "127.0.0.1" ] || [ "$host" = "0.0.0.0" ]; } \
+        && [ "$port" = "9000" ] && [ "$minio_api_port" != "9000" ]; then
+        port="$minio_api_port"
+    fi
+
+    build_url "$scheme" "$host" "$port" "$path"
+}
+
 #=============================================================#
 #  Utility Functions                                          #
 #=============================================================#
@@ -71,9 +195,14 @@ generate_env_file() {
     log_step "Generating environment file..."
 
     local app_keys=$(jq -r '.app.keys // empty' "$CONFIG_FILE")
+    local app_port=$(jq -r '.app.port // 7001' "$CONFIG_FILE")
+    local db_host=$(jq -r '.database.host // "postgres"' "$CONFIG_FILE")
+    local db_port=$(jq -r '.database.port // 5432' "$CONFIG_FILE")
     local db_password=$(jq -r '.database.password // empty' "$CONFIG_FILE")
     local db_username=$(jq -r '.database.username // "postgres"' "$CONFIG_FILE")
     local db_name=$(jq -r '.database.database // "streamerhelper"' "$CONFIG_FILE")
+    local redis_host=$(jq -r '.redis.host // "redis"' "$CONFIG_FILE")
+    local redis_port=$(jq -r '.redis.port // 6379' "$CONFIG_FILE")
     local s3_endpoint=$(jq -r '.s3.endpoint // "http://minio:9000"' "$CONFIG_FILE")
     local s3_public_endpoint=$(jq -r '.s3.publicEndpoint // "http://localhost:9000"' "$CONFIG_FILE")
     local s3_access_key=$(jq -r '.s3.accessKey // "minioadmin"' "$CONFIG_FILE")
@@ -92,17 +221,53 @@ generate_env_file() {
         exit 1
     fi
 
+    local normalized_db
+    normalized_db=$(normalize_service_connection "$db_host" "$db_port" "postgres" "5432")
+    local normalized_db_host="${normalized_db% *}"
+    local normalized_db_port="${normalized_db#* }"
+
+    local normalized_redis
+    normalized_redis=$(normalize_service_connection "$redis_host" "$redis_port" "redis" "6379")
+    local normalized_redis_host="${normalized_redis% *}"
+    local normalized_redis_port="${normalized_redis#* }"
+
+    local normalized_s3_endpoint
+    normalized_s3_endpoint=$(normalize_internal_s3_endpoint "$s3_endpoint")
+    local normalized_s3_public_endpoint
+    normalized_s3_public_endpoint=$(normalize_public_s3_endpoint "$s3_public_endpoint" "$minio_api_port")
+
+    if [ "$app_port" != "7001" ]; then
+        log_warn "Docker deployment keeps backend internal port fixed at 7001. Use http.port to change the public access port."
+    fi
+    if [ "$db_host:$db_port" != "$normalized_db_host:$normalized_db_port" ]; then
+        log_warn "Using Docker-internal PostgreSQL connection ${normalized_db_host}:${normalized_db_port} instead of ${db_host}:${db_port}"
+    fi
+    if [ "$redis_host:$redis_port" != "$normalized_redis_host:$normalized_redis_port" ]; then
+        log_warn "Using Docker-internal Redis connection ${normalized_redis_host}:${normalized_redis_port} instead of ${redis_host}:${redis_port}"
+    fi
+    if [ "$s3_endpoint" != "$normalized_s3_endpoint" ]; then
+        log_warn "Using Docker-internal S3 endpoint ${normalized_s3_endpoint} instead of ${s3_endpoint}"
+    fi
+    if [ "$s3_public_endpoint" != "$normalized_s3_public_endpoint" ]; then
+        log_warn "Using browser-facing S3 endpoint ${normalized_s3_public_endpoint} instead of ${s3_public_endpoint}"
+    fi
+
     mkdir -p "$CONFIG_DIR"
 
     cat > "$ENV_FILE" << EOF
 # Auto-generated from settings.json - DO NOT EDIT DIRECTLY
 TZ=${timezone}
 APP_KEYS=${app_keys}
+APP_PORT=7001
+TYPEORM_HOST=${normalized_db_host}
+TYPEORM_PORT=${normalized_db_port}
 TYPEORM_USERNAME=${db_username}
 TYPEORM_PASSWORD=${db_password}
 TYPEORM_DATABASE=${db_name}
-S3_ENDPOINT=${s3_endpoint}
-S3_PUBLIC_ENDPOINT=${s3_public_endpoint}
+REDIS_HOST=${normalized_redis_host}
+REDIS_PORT=${normalized_redis_port}
+S3_ENDPOINT=${normalized_s3_endpoint}
+S3_PUBLIC_ENDPOINT=${normalized_s3_public_endpoint}
 S3_ACCESS_KEY=${s3_access_key}
 S3_SECRET_KEY=${s3_secret_key}
 S3_BUCKET=${s3_bucket}
@@ -120,10 +285,14 @@ EOF
 
 # Generate pgAdmin configuration files
 generate_pgadmin_config() {
-    local db_host="postgres"
+    local db_host=$(jq -r '.database.host // "postgres"' "$CONFIG_FILE")
     local db_port=$(jq -r '.database.port // 5432' "$CONFIG_FILE")
     local db_username=$(jq -r '.database.username // "postgres"' "$CONFIG_FILE")
     local db_name=$(jq -r '.database.database // "streamerhelper"' "$CONFIG_FILE")
+    local normalized_db
+    normalized_db=$(normalize_service_connection "$db_host" "$db_port" "postgres" "5432")
+    db_host="${normalized_db% *}"
+    db_port="${normalized_db#* }"
 
     local pgadmin_dir="$CONFIG_DIR/pgadmin"
     mkdir -p "$pgadmin_dir"
@@ -285,11 +454,7 @@ do_migrate() {
     log_step "Running migrations..."
     docker run --rm \
         --network streamer-network \
-        -e TYPEORM_HOST=postgres \
-        -e TYPEORM_PORT=5432 \
-        -e TYPEORM_USERNAME=$(jq -r '.database.username // "postgres"' "$CONFIG_FILE") \
-        -e TYPEORM_PASSWORD=$(jq -r '.database.password' "$CONFIG_FILE") \
-        -e TYPEORM_DATABASE=$(jq -r '.database.database // "streamerhelper"' "$CONFIG_FILE") \
+        --env-file "$ENV_FILE" \
         --entrypoint "" \
         "$image_to_use" \
         npm run migration:run:prod

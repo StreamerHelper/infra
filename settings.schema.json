@@ -17,8 +17,8 @@
     "database": {
       "type": "object",
       "properties": {
-        "host": { "type": "string" },
-        "port": { "type": "integer" },
+        "host": { "type": "string", "description": "数据库主机。Docker 部署内置 PostgreSQL 时使用 postgres。" },
+        "port": { "type": "integer", "description": "数据库内部连接端口。Docker 内置 PostgreSQL 固定为 5432，不随宿主机暴露端口变化。" },
         "username": { "type": "string" },
         "password": { "type": "string" },
         "database": { "type": "string" },
@@ -28,8 +28,8 @@
     "redis": {
       "type": "object",
       "properties": {
-        "host": { "type": "string" },
-        "port": { "type": "integer" },
+        "host": { "type": "string", "description": "Redis 主机。Docker 部署内置 Redis 时使用 redis。" },
+        "port": { "type": "integer", "description": "Redis 内部连接端口。Docker 内置 Redis 固定为 6379，不随宿主机暴露端口变化。" },
         "password": { "type": "string" },
         "db": { "type": "integer" }
       }
