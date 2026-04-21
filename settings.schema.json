@@ -14,6 +14,13 @@
         "timezone": { "type": "string", "default": "Asia/Shanghai", "description": "容器时区（IANA 格式）" }
       }
     },
+    "http": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "default": 7080, "description": "HTTP 宿主机暴露端口" },
+        "httpsPort": { "type": "integer", "default": 7443, "description": "HTTPS 宿主机暴露端口" }
+      }
+    },
     "database": {
       "type": "object",
       "properties": {
@@ -37,12 +44,19 @@
     "s3": {
       "type": "object",
       "properties": {
-        "endpoint": { "type": "string", "description": "内部 S3/MinIO 访问地址（Docker 网络内，用于上传下载）" },
-        "publicEndpoint": { "type": "string", "description": "外部 S3/MinIO 访问地址（浏览器可访问，用于生成播放 URL）" },
+        "endpoint": { "type": "string", "description": "内部 S3/MinIO 访问地址（Docker 网络内，用于上传下载；内置 MinIO 默认 http://minio:7090）" },
+        "publicEndpoint": { "type": "string", "description": "外部 S3/MinIO 访问地址（浏览器可访问，用于生成播放 URL；内置 MinIO 默认 http://localhost:7090）" },
         "region": { "type": "string" },
         "accessKey": { "type": "string" },
         "secretKey": { "type": "string" },
         "bucket": { "type": "string" }
+      }
+    },
+    "minio": {
+      "type": "object",
+      "properties": {
+        "apiPort": { "type": "integer", "default": 7090, "description": "MinIO API 宿主机暴露端口" },
+        "consolePort": { "type": "integer", "default": 7091, "description": "MinIO Console 宿主机暴露端口" }
       }
     },
     "recorder": {

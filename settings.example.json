@@ -6,8 +6,8 @@
     "timezone": "Asia/Shanghai"
   },
   "http": {
-    "port": 80,
-    "httpsPort": 443
+    "port": 7080,
+    "httpsPort": 7443
   },
   "database": {
     "host": "postgres",
@@ -24,16 +24,16 @@
     "db": 0
   },
   "s3": {
-    "endpoint": "http://minio:9000",
-    "publicEndpoint": "http://localhost:9000",
+    "endpoint": "http://minio:7090",
+    "publicEndpoint": "http://localhost:7090",
     "region": "us-east-1",
     "accessKey": "minioadmin",
     "secretKey": "YOUR_S3_SECRET_HERE",
     "bucket": "streamerhelper-archive"
   },
   "minio": {
-    "consolePort": 9001,
-    "apiPort": 9000
+    "consolePort": 7091,
+    "apiPort": 7090
   },
   "recorder": {
     "segmentDuration": 10,

@@ -18,8 +18,8 @@ const DEFAULT_CONFIG = {
     timezone: 'Asia/Shanghai'
   },
   http: {
-    port: 80,
-    httpsPort: 443
+    port: 7080,
+    httpsPort: 7443
   },
   database: {
     host: 'postgres',
@@ -36,16 +36,16 @@ const DEFAULT_CONFIG = {
     db: 0
   },
   s3: {
-    endpoint: 'http://minio:9000',
-    publicEndpoint: 'http://localhost:9000',
+    endpoint: 'http://minio:7090',
+    publicEndpoint: 'http://localhost:7090',
     region: 'us-east-1',
     accessKey: 'minioadmin',
     secretKey: '',
     bucket: 'streamerhelper-archive'
   },
   minio: {
-    consolePort: 9001,
-    apiPort: 9000
+    consolePort: 7091,
+    apiPort: 7090
   },
   recorder: {
     segmentDuration: 10,
@@ -64,6 +64,14 @@ const DEFAULT_CONFIG = {
     defaultTitleTemplate: '{streamerName}的直播录像 {date}'
   }
 };
+
+function buildLocalMinioEndpoint(port = 7090) {
+  return `http://minio:${port}`;
+}
+
+function buildLocalMinioPublicEndpoint(port = 7090) {
+  return `http://localhost:${port}`;
+}
 
 function generateSecret(length = 32) {
   return crypto.randomBytes(length).toString('hex').slice(0, length);
@@ -123,13 +131,13 @@ async function initConfig() {
       type: 'number',
       name: 'httpPort',
       message: 'HTTP port:',
-      default: 80
+      default: DEFAULT_CONFIG.http.port
     },
     {
       type: 'number',
       name: 'httpsPort',
       message: 'HTTPS port:',
-      default: 443
+      default: DEFAULT_CONFIG.http.httpsPort
     },
     {
       type: 'input',
@@ -169,25 +177,25 @@ async function initConfig() {
       type: 'number',
       name: 'minioApiPort',
       message: 'MinIO API port (host exposed port):',
-      default: 9000
+      default: DEFAULT_CONFIG.minio.apiPort
     },
     {
       type: 'number',
       name: 'minioConsolePort',
       message: 'MinIO Console port (host exposed port):',
-      default: 9001
+      default: DEFAULT_CONFIG.minio.consolePort
     },
     {
       type: 'input',
       name: 's3Endpoint',
-      message: 'S3 Internal Endpoint (for container, usually keep default):',
-      default: 'http://minio:9000'
+      message: 'S3 Internal Endpoint (for container; built-in MinIO defaults to http://minio:<apiPort>, use external S3 only if needed):',
+      default: (answers) => buildLocalMinioEndpoint(answers.minioApiPort || DEFAULT_CONFIG.minio.apiPort)
     },
     {
       type: 'input',
       name: 's3PublicEndpoint',
       message: 'S3 Public Endpoint (for browser access):',
-      default: (answers) => `http://localhost:${answers.minioApiPort || 9000}`
+      default: (answers) => buildLocalMinioPublicEndpoint(answers.minioApiPort || DEFAULT_CONFIG.minio.apiPort)
     },
     {
       type: 'input',
@@ -343,8 +351,8 @@ async function editConfig() {
   switch (section) {
     case 'http':
       updates = await inquirer.prompt([
-        { type: 'number', name: 'port', message: 'HTTP port:', default: config.http?.port || 80 },
-        { type: 'number', name: 'httpsPort', message: 'HTTPS port:', default: config.http?.httpsPort || 443 }
+        { type: 'number', name: 'port', message: 'HTTP port:', default: config.http?.port || DEFAULT_CONFIG.http.port },
+        { type: 'number', name: 'httpsPort', message: 'HTTPS port:', default: config.http?.httpsPort || DEFAULT_CONFIG.http.httpsPort }
       ]);
       config.http = { ...config.http, ...updates };
       break;
@@ -371,18 +379,64 @@ async function editConfig() {
       break;
 
     case 's3':
-      const inferredPublicEndpoint =
-        config.s3.publicEndpoint === 'http://localhost:9000' &&
-        (config.minio?.apiPort || 9000) !== 9000
-          ? `http://localhost:${config.minio?.apiPort || 9000}`
-          : config.s3.publicEndpoint;
+      const currentApiPort = config.minio?.apiPort || DEFAULT_CONFIG.minio.apiPort;
+      const currentConsolePort = config.minio?.consolePort || DEFAULT_CONFIG.minio.consolePort;
+      const defaultInternalEndpoint = buildLocalMinioEndpoint(currentApiPort);
+      const defaultPublicEndpoint = buildLocalMinioPublicEndpoint(currentApiPort);
       updates = await inquirer.prompt([
-        { type: 'input', name: 'endpoint', message: 'Internal Endpoint (for container):', default: config.s3.endpoint },
-        { type: 'input', name: 'publicEndpoint', message: 'Public Endpoint (for browser):', default: inferredPublicEndpoint },
+        {
+          type: 'number',
+          name: 'apiPort',
+          message: 'MinIO API port (host exposed port):',
+          default: currentApiPort
+        },
+        {
+          type: 'number',
+          name: 'consolePort',
+          message: 'MinIO Console port (host exposed port):',
+          default: currentConsolePort
+        },
+        {
+          type: 'input',
+          name: 'endpoint',
+          message: 'Internal Endpoint (for container; built-in MinIO defaults to http://minio:<apiPort>, use external S3 only if needed):',
+          default: (answers) => {
+            const nextApiPort = answers.apiPort || currentApiPort;
+            if (
+              !config.s3.endpoint ||
+              config.s3.endpoint === DEFAULT_CONFIG.s3.endpoint ||
+              config.s3.endpoint === defaultInternalEndpoint
+            ) {
+              return buildLocalMinioEndpoint(nextApiPort);
+            }
+            return config.s3.endpoint;
+          }
+        },
+        {
+          type: 'input',
+          name: 'publicEndpoint',
+          message: 'Public Endpoint (for browser, should match host MinIO API port):',
+          default: (answers) => {
+            const nextApiPort = answers.apiPort || currentApiPort;
+            if (
+              !config.s3.publicEndpoint ||
+              config.s3.publicEndpoint === DEFAULT_CONFIG.s3.publicEndpoint ||
+              config.s3.publicEndpoint === defaultPublicEndpoint
+            ) {
+              return buildLocalMinioPublicEndpoint(nextApiPort);
+            }
+            return config.s3.publicEndpoint;
+          }
+        },
         { type: 'input', name: 'accessKey', message: 'Access Key:', default: config.s3.accessKey },
         { type: 'password', name: 'secretKey', message: 'Secret Key (empty to keep current):', mask: '*' },
         { type: 'input', name: 'bucket', message: 'Bucket:', default: config.s3.bucket },
       ]);
+      config.minio = {
+        ...config.minio,
+        apiPort: updates.apiPort,
+        consolePort: updates.consolePort,
+      };
       config.s3 = {
         ...config.s3,
         endpoint: updates.endpoint,

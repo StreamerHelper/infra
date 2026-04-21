@@ -58,7 +58,7 @@ npm install
 ```
 
 按提示输入：
-- **HTTP 端口** (默认 80)
+- **HTTP 端口** (默认 7080)
 - **数据库密码** (留空自动生成)
 - **MinIO 密钥** (留空自动生成)
 
@@ -93,8 +93,8 @@ npm install
 
 | 服务 | 地址 |
 |------|------|
-| 应用首页 | http://localhost |
-| MinIO 控制台 | http://localhost:9001 |
+| 应用首页 | http://localhost:7080 |
+| MinIO 控制台 | http://localhost:7091 |
 
 ### 一键启动 (可选)
 
@@ -143,18 +143,20 @@ npm install
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `http.port` | HTTP 端口 | 80 |
-| `http.httpsPort` | HTTPS 端口 | 443 |
+| `http.port` | HTTP 端口 | 7080 |
+| `http.httpsPort` | HTTPS 端口 | 7443 |
 | `database.password` | 数据库密码 | 自动生成 |
 | `s3.accessKey` | MinIO 访问密钥 | minioadmin |
 | `s3.secretKey` | MinIO 私密密钥 | 自动生成 |
-| `minio.consolePort` | MinIO 控制台端口 | 9001 |
+| `minio.apiPort` | MinIO API 端口 | 7090 |
+| `minio.consolePort` | MinIO 控制台端口 | 7091 |
 | `recorder.maxRecordingTime` | 最大录制时长 (秒) | 86400 |
 | `poller.checkInterval` | 轮询间隔 (秒) | 60 |
 
 注意：
 - `http.port`、`http.httpsPort`、`minio.apiPort`、`minio.consolePort` 是宿主机暴露端口。
-- Docker 内部服务连接仍然固定使用 `postgres:5432`、`redis:6379`、`minio:9000`。
+- Docker 内置 MinIO 默认也统一使用 `minio:7090`。
+- 因此如果你改了 MinIO 的 API 端口，`s3.endpoint` 和 `s3.publicEndpoint` 默认都会跟着改。
 - 后端容器内部监听端口固定为 `7001`。如需更改对外访问端口，请修改 `http.port`，不要修改 `app.port`。
 
 ---
@@ -170,12 +172,12 @@ npm install
 输出示例：
 ```
 NAMES               STATUS                  PORTS
-streamer-nginx      Up 2 hours              0.0.0.0:80->80/tcp
+streamer-nginx      Up 2 hours              0.0.0.0:7080->80/tcp
 streamer-frontend   Up 2 hours (healthy)    3000/tcp
 streamer-backend    Up 2 hours (healthy)    7001/tcp
 streamer-postgres   Up 2 hours (healthy)    5432/tcp
 streamer-redis      Up 2 hours (healthy)    6379/tcp
-streamer-minio      Up 2 hours (healthy)    0.0.0.0:9000-9001->9000-9001/tcp
+streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
 ```
 
 ### 查看日志
@@ -312,7 +314,7 @@ docker volume rm infra_postgres_data
 或者停止占用端口的服务：
 ```bash
 # 查看占用端口的进程
-lsof -i :80
+lsof -i :7080
 ```
 
 ### Q: MinIO 控制台无法访问
@@ -322,7 +324,7 @@ lsof -i :80
 ./bin/control status | grep minio
 ```
 
-检查端口映射是否正确 (应显示 `0.0.0.0:9001->9001/tcp`)。
+检查端口映射是否正确 (应显示 `0.0.0.0:7091->7091/tcp`)。
 
 ### Q: 后端启动失败
 

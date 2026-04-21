@@ -13,6 +13,13 @@ CONFIG_DIR="${STREAMER_HELPER_CONFIG_DIR:-$HOME/.streamer-helper}"
 CONFIG_FILE="$CONFIG_DIR/settings.json"
 ENV_FILE="$CONFIG_DIR/.docker-env"
 
+DEFAULT_HTTP_PORT=7080
+DEFAULT_HTTPS_PORT=7443
+DEFAULT_MINIO_API_PORT=7090
+DEFAULT_MINIO_CONSOLE_PORT=7091
+DEFAULT_INTERNAL_MINIO_ENDPOINT="http://minio:${DEFAULT_MINIO_API_PORT}"
+DEFAULT_PUBLIC_MINIO_ENDPOINT="http://localhost:${DEFAULT_MINIO_API_PORT}"
+
 # Compose files
 COMPOSE_INFRA="$INFRA_DIR/docker-compose.infra.yml"
 COMPOSE_APP="$INFRA_DIR/docker-compose.app.yml"
@@ -112,24 +119,27 @@ normalize_service_connection() {
 
 normalize_internal_s3_endpoint() {
     local endpoint="$1"
+    local minio_api_port="${2:-$DEFAULT_MINIO_API_PORT}"
     split_url "$endpoint"
 
     local scheme="${URL_SCHEME:-http}"
     local host="$URL_HOST"
     local port="$URL_PORT"
     local path="$URL_PATH"
+    local use_minio_port=false
 
     if is_local_host "$host" || [ -z "$host" ] || [ "$host" = "minio" ] || [ "$host" = "streamer-minio" ]; then
         host="minio"
-        port="9000"
-    fi
-
-    if [ -z "$port" ]; then
-        port="9000"
+        use_minio_port=true
     fi
 
     if [ "$host" = "minio" ] || [ "$host" = "streamer-minio" ]; then
-        port="9000"
+        host="minio"
+        use_minio_port=true
+    fi
+
+    if [ "$use_minio_port" = true ]; then
+        port="$minio_api_port"
     fi
 
     build_url "$scheme" "$host" "$port" "$path"
@@ -154,7 +164,8 @@ normalize_public_s3_endpoint() {
     fi
 
     if { [ "$host" = "localhost" ] || [ "$host" = "127.0.0.1" ] || [ "$host" = "0.0.0.0" ]; } \
-        && [ "$port" = "9000" ] && [ "$minio_api_port" != "9000" ]; then
+        && { [ "$port" = "9000" ] || [ "$port" = "$DEFAULT_MINIO_API_PORT" ]; } \
+        && [ "$port" != "$minio_api_port" ]; then
         port="$minio_api_port"
     fi
 
@@ -203,16 +214,16 @@ generate_env_file() {
     local db_name=$(jq -r '.database.database // "streamerhelper"' "$CONFIG_FILE")
     local redis_host=$(jq -r '.redis.host // "redis"' "$CONFIG_FILE")
     local redis_port=$(jq -r '.redis.port // 6379' "$CONFIG_FILE")
-    local s3_endpoint=$(jq -r '.s3.endpoint // "http://minio:9000"' "$CONFIG_FILE")
-    local s3_public_endpoint=$(jq -r '.s3.publicEndpoint // "http://localhost:9000"' "$CONFIG_FILE")
+    local s3_endpoint=$(jq -r ".s3.endpoint // \"$DEFAULT_INTERNAL_MINIO_ENDPOINT\"" "$CONFIG_FILE")
+    local s3_public_endpoint=$(jq -r ".s3.publicEndpoint // \"$DEFAULT_PUBLIC_MINIO_ENDPOINT\"" "$CONFIG_FILE")
     local s3_access_key=$(jq -r '.s3.accessKey // "minioadmin"' "$CONFIG_FILE")
     local s3_secret_key=$(jq -r '.s3.secretKey // empty' "$CONFIG_FILE")
     local s3_bucket=$(jq -r '.s3.bucket // "streamerhelper-archive"' "$CONFIG_FILE")
     local s3_region=$(jq -r '.s3.region // "us-east-1"' "$CONFIG_FILE")
-    local http_port=$(jq -r '.http.port // 80' "$CONFIG_FILE")
-    local https_port=$(jq -r '.http.httpsPort // 443' "$CONFIG_FILE")
-    local minio_console_port=$(jq -r '.minio.consolePort // 9001' "$CONFIG_FILE")
-    local minio_api_port=$(jq -r '.minio.apiPort // 9000' "$CONFIG_FILE")
+    local http_port=$(jq -r ".http.port // $DEFAULT_HTTP_PORT" "$CONFIG_FILE")
+    local https_port=$(jq -r ".http.httpsPort // $DEFAULT_HTTPS_PORT" "$CONFIG_FILE")
+    local minio_console_port=$(jq -r ".minio.consolePort // $DEFAULT_MINIO_CONSOLE_PORT" "$CONFIG_FILE")
+    local minio_api_port=$(jq -r ".minio.apiPort // $DEFAULT_MINIO_API_PORT" "$CONFIG_FILE")
     local redis_password=$(jq -r '.redis.password // ""' "$CONFIG_FILE")
     local timezone=$(jq -r '.app.timezone // "Asia/Shanghai"' "$CONFIG_FILE")
 
@@ -232,7 +243,7 @@ generate_env_file() {
     local normalized_redis_port="${normalized_redis#* }"
 
     local normalized_s3_endpoint
-    normalized_s3_endpoint=$(normalize_internal_s3_endpoint "$s3_endpoint")
+    normalized_s3_endpoint=$(normalize_internal_s3_endpoint "$s3_endpoint" "$minio_api_port")
     local normalized_s3_public_endpoint
     normalized_s3_public_endpoint=$(normalize_public_s3_endpoint "$s3_public_endpoint" "$minio_api_port")
 
@@ -373,7 +384,8 @@ ensure_minio_bucket() {
     log_step "Ensuring MinIO bucket exists: $bucket"
 
     # Configure mc alias inside container
-    docker exec streamer-minio mc alias set local http://localhost:9000 "$access_key" "$secret_key" > /dev/null 2>&1
+    local minio_api_port=$(jq -r ".minio.apiPort // $DEFAULT_MINIO_API_PORT" "$CONFIG_FILE")
+    docker exec streamer-minio mc alias set local "http://localhost:${minio_api_port}" "$access_key" "$secret_key" > /dev/null 2>&1
 
     # Create bucket if not exists
     if docker exec streamer-minio mc ls local/"$bucket" > /dev/null 2>&1; then
@@ -495,8 +507,8 @@ do_app_up() {
 
     log_info "Application services are ready!"
 
-    local http_port=$(jq -r '.http.port // 80' "$CONFIG_FILE")
-    local minio_port=$(jq -r '.minio.consolePort // 9001' "$CONFIG_FILE")
+    local http_port=$(jq -r ".http.port // $DEFAULT_HTTP_PORT" "$CONFIG_FILE")
+    local minio_port=$(jq -r ".minio.consolePort // $DEFAULT_MINIO_CONSOLE_PORT" "$CONFIG_FILE")
 
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
@@ -600,14 +612,14 @@ do_dev_up() {
 
     log_info "Dev environment ready!"
 
-    local http_port=$(jq -r '.http.port // 80' "$CONFIG_FILE")
-    local minio_port=$(jq -r '.minio.consolePort // 9001' "$CONFIG_FILE")
+    local http_port=$(jq -r ".http.port // $DEFAULT_HTTP_PORT" "$CONFIG_FILE")
+    local minio_port=$(jq -r ".minio.consolePort // $DEFAULT_MINIO_CONSOLE_PORT" "$CONFIG_FILE")
 
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║${NC}  Application:   http://localhost:${http_port}"
     echo -e "${GREEN}║${NC}  MinIO Console: http://localhost:${minio_port}"
-    echo -e "${GREEN}║${NC}  pgAdmin:       http://localhost:5050"
+    echo -e "${GREEN}║${NC}  pgAdmin:       http://localhost:7505"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }

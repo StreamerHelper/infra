@@ -6,7 +6,7 @@ StreamerHelper 的 Docker 部署配置和管理工具。
 
 ```
                     ┌─────────────┐
-                    │   Nginx     │ :80/:443
+                    │   Nginx     │ :7080/:7443
                     │  (反向代理)  │
                     └──────┬──────┘
                            │
@@ -24,7 +24,7 @@ StreamerHelper 的 Docker 部署配置和管理工具。
          ▼               ▼               ▼
   ┌──────────┐    ┌──────────┐    ┌──────────┐
   │PostgreSQL│    │  Redis   │    │  MinIO   │
-  │  :5432   │    │  :6379   │    │:9000/9001│
+  │  :5432   │    │  :6379   │    │:7090/7091│
   └──────────┘    └──────────┘    └──────────┘
 ```
 
@@ -97,10 +97,10 @@ npm install
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| 应用首页 | http://localhost | Web UI |
-| API | http://localhost/api | 后端接口 |
-| Bull Board | http://localhost/ui | 队列监控 |
-| MinIO Console | http://localhost:9001 | 对象存储管理 |
+| 应用首页 | http://localhost:7080 | Web UI |
+| API | http://localhost:7080/api | 后端接口 |
+| Bull Board | http://localhost:7080/ui | 队列监控 |
+| MinIO Console | http://localhost:7091 | 对象存储管理 |
 
 ## 配置文件
 
@@ -119,7 +119,7 @@ npm install
 
 部署时请注意：
 - `http.port` / `httpsPort` / `minio.apiPort` / `minio.consolePort` 只影响宿主机暴露端口。
-- 容器内部仍通过 `postgres:5432`、`redis:6379`、`minio:9000` 互联。
+- Docker 内置 MinIO 默认也统一使用 `minio:7090`；如果你改了 `minio.apiPort`，`s3.endpoint` 默认会跟着改成 `http://minio:<apiPort>`。
 - 后端容器内部端口固定为 `7001`，对外访问端口由 Nginx 的 `http.port` 控制。
 
 ## 开发者指南
