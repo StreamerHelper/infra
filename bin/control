@@ -29,7 +29,8 @@ COMPOSE_DEV="$INFRA_DIR/docker-compose.dev.yml"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
 DOCKER_ORG="${DOCKER_ORG:-umuoy1}"
 IMAGE_PREFIX="${IMAGE_PREFIX:-streamerhelper}"
-BACKEND_IMAGE="${DOCKER_REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}-backend:${BACKEND_VERSION:-latest}"
+CONTROL_BACKEND_VERSION="${BACKEND_VERSION:-}"
+CONTROL_FRONTEND_VERSION="${FRONTEND_VERSION:-}"
 
 # Color output
 RED='\033[0;31m'
@@ -43,6 +44,50 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+resolve_backend_version() {
+    if [ -n "${CONTROL_BACKEND_VERSION:-}" ]; then
+        printf '%s' "$CONTROL_BACKEND_VERSION"
+    else
+        printf 'latest'
+    fi
+}
+
+resolve_frontend_version() {
+    if [ -n "${CONTROL_FRONTEND_VERSION:-}" ]; then
+        printf '%s' "$CONTROL_FRONTEND_VERSION"
+    else
+        printf 'latest'
+    fi
+}
+
+resolve_backend_image() {
+    printf '%s/%s/%s-backend:%s' \
+        "$DOCKER_REGISTRY" \
+        "$DOCKER_ORG" \
+        "$IMAGE_PREFIX" \
+        "$(resolve_backend_version)"
+}
+
+resolve_frontend_image() {
+    printf '%s/%s/%s-frontend:%s' \
+        "$DOCKER_REGISTRY" \
+        "$DOCKER_ORG" \
+        "$IMAGE_PREFIX" \
+        "$(resolve_frontend_version)"
+}
+
+compose_app() {
+    BACKEND_VERSION="$(resolve_backend_version)" \
+    FRONTEND_VERSION="$(resolve_frontend_version)" \
+    docker compose -f "$COMPOSE_APP" --env-file "$ENV_FILE" "$@"
+}
+
+compose_app_dev() {
+    BACKEND_VERSION="$(resolve_backend_version)" \
+    FRONTEND_VERSION="$(resolve_frontend_version)" \
+    docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" --env-file "$ENV_FILE" "$@"
+}
 
 is_local_host() {
     case "${1:-}" in
@@ -452,10 +497,12 @@ do_migrate() {
     fi
 
     local use_local_image=false
-    local image_to_use="$BACKEND_IMAGE"
+    local image_to_use
+    image_to_use="$(resolve_backend_image)"
 
     # Check if local image exists
-    if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "infra-backend:local"; then
+    if [ "${FORCE_REMOTE_BACKEND_IMAGE:-0}" != "1" ] \
+        && docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "infra-backend:local"; then
         use_local_image=true
         image_to_use="infra-backend:local"
         log_info "Using local backend image"
@@ -496,7 +543,7 @@ do_app_up() {
     fi
 
     log_step "Starting backend, frontend, nginx..."
-    docker compose -f "$COMPOSE_APP" --env-file "$ENV_FILE" up -d
+    compose_app up -d
 
     log_step "Waiting for backend to be healthy..."
     if ! wait_for_healthy "streamer-backend" 180; then
@@ -519,8 +566,10 @@ do_app_up() {
 }
 
 do_app_down() {
+    check_config
+    generate_env_file
     log_step "Stopping application services..."
-    docker compose -f "$COMPOSE_APP" down
+    compose_app down
     log_info "Application services stopped."
 }
 
@@ -564,10 +613,10 @@ do_dev_build() {
 
     if [ -n "$service" ]; then
         log_step "Building $service..."
-        docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" --env-file "$ENV_FILE" build "$service"
+        compose_app_dev build "$service"
     else
         log_step "Building all services..."
-        docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" --env-file "$ENV_FILE" build
+        compose_app_dev build
     fi
 
     log_info "Build complete!"
@@ -594,14 +643,14 @@ do_dev_up() {
 
     # Build images first
     log_step "Building local images..."
-    docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" --env-file "$ENV_FILE" build
+    compose_app_dev build
 
     # Run migrations before starting app
     do_migrate
 
     # Start app
     log_step "Starting application services..."
-    docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" --env-file "$ENV_FILE" up -d
+    compose_app_dev up -d
 
     log_step "Waiting for backend to be healthy..."
     if ! wait_for_healthy "streamer-backend" 180; then
@@ -625,8 +674,10 @@ do_dev_up() {
 }
 
 do_dev_down() {
+    check_config
+    generate_env_file
     log_step "Stopping dev environment..."
-    docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" down 2>/dev/null || true
+    compose_app_dev down 2>/dev/null || true
     log_info "Dev environment stopped."
 }
 
@@ -658,6 +709,98 @@ do_logs() {
 }
 
 #=============================================================#
+#  Update Commands                                            #
+#=============================================================#
+
+do_update_app() {
+    local version="${1:-}"
+
+    if [ -n "$version" ]; then
+        CONTROL_BACKEND_VERSION="$version"
+        CONTROL_FRONTEND_VERSION="$version"
+    fi
+
+    local backend_image
+    local frontend_image
+    backend_image="$(resolve_backend_image)"
+    frontend_image="$(resolve_frontend_image)"
+
+    echo ""
+    echo -e "${CYAN}Updating Application Images...${NC}"
+    echo ""
+
+    check_dependencies
+    check_config
+    generate_env_file
+
+    log_info "Backend image:  $backend_image"
+    log_info "Frontend image: $frontend_image"
+
+    log_step "Pulling application images..."
+    compose_app pull backend frontend nginx
+
+    log_step "Stopping current application services..."
+    compose_app down
+
+    log_step "Running migrations with updated backend image..."
+    FORCE_REMOTE_BACKEND_IMAGE=1 do_migrate
+
+    log_step "Starting updated application services..."
+    compose_app up -d --force-recreate
+
+    log_step "Waiting for backend to be healthy..."
+    if ! wait_for_healthy "streamer-backend" 180; then
+        log_error "Backend failed to start after update"
+        docker logs streamer-backend --tail 30
+        exit 1
+    fi
+
+    log_info "Application update completed!"
+    echo ""
+}
+
+do_update_infra() {
+    echo ""
+    echo -e "${CYAN}Updating Infrastructure Images...${NC}"
+    echo ""
+
+    check_dependencies
+    check_config
+    generate_env_file
+
+    log_step "Pulling infrastructure images..."
+    docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" pull
+
+    log_step "Recreating infrastructure services..."
+    docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" up -d --force-recreate
+
+    log_step "Waiting for services to be healthy..."
+    wait_for_healthy "streamer-postgres" 60 || { log_error "PostgreSQL failed to become healthy after update"; exit 1; }
+    wait_for_healthy "streamer-redis" 30 || { log_error "Redis failed to become healthy after update"; exit 1; }
+    wait_for_healthy "streamer-minio" 60 || { log_error "MinIO failed to become healthy after update"; exit 1; }
+
+    sync_postgres_password
+    ensure_minio_bucket
+
+    log_info "Infrastructure update completed!"
+    echo ""
+}
+
+do_update_all() {
+    local version="${1:-}"
+    check_config
+    generate_env_file
+
+    if docker ps --format '{{.Names}}' | grep -Eq '^streamer-(backend|frontend|nginx)$'; then
+        log_step "Stopping application services before infrastructure update..."
+        compose_app down
+    fi
+
+    do_update_infra
+    do_update_app "$version"
+}
+
+#=============================================================#
 #  Help & Main                                                #
 #=============================================================#
 
@@ -679,6 +822,7 @@ print_usage() {
     echo -e "${CYAN}Combined:${NC}"
     echo "  up             Start everything (infra + migrate + app)"
     echo "  down           Stop all services"
+    echo "  update [t] [v] Update images and recreate services"
     echo "  status         Show service status"
     echo "  logs [service] Show logs (e.g., logs backend)"
     echo ""
@@ -693,6 +837,8 @@ print_usage() {
     echo "  ./bin/control migrate      # Step 2: Run migrations"
     echo "  ./bin/control app up       # Step 3: Start app"
     echo "  ./bin/control up           # All-in-one"
+    echo "  ./bin/control update app   # Update backend/frontend/nginx"
+    echo "  ./bin/control update all v1.2.3"
     echo "  ./bin/control dev up       # Development mode"
     echo ""
 }
@@ -721,6 +867,23 @@ case "${1:-}" in
         ;;
     down)
         do_down
+        ;;
+    update)
+        case "${2:-all}" in
+            app)
+                do_update_app "$3"
+                ;;
+            infra)
+                do_update_infra
+                ;;
+            all)
+                do_update_all "$3"
+                ;;
+            *)
+                log_error "Usage: ./bin/control update [app|infra|all] [version]"
+                exit 1
+                ;;
+        esac
         ;;
     status)
         do_status

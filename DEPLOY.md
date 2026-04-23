@@ -217,20 +217,46 @@ streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
 
 ## 版本更新
 
-### 方法一：使用预构建镜像 (推荐)
+### 方法一：使用 `update` 命令 (推荐)
 
 ```bash
-# 1. 拉取最新镜像
-docker pull umuoy1/streamerhelper-backend:latest
-docker pull umuoy1/streamerhelper-frontend:latest
+# 更新后端、前端和 nginx
+./bin/control update app
 
-# 2. 重启应用
-./bin/control app down
-./bin/control migrate      # 运行新的数据库迁移
-./bin/control app up
+# 指定版本更新后端和前端
+./bin/control update app v1.2.3
+
+# 更新 PostgreSQL、Redis、MinIO
+./bin/control update infra
+
+# 全量更新（基础设施 + 应用）
+./bin/control update all
+
+# 全量更新并锁定应用版本
+./bin/control update all v1.2.3
 ```
 
-### 方法二：本地构建
+`update app` 会自动完成：
+- 拉取 backend / frontend / nginx 镜像
+- 停止当前应用服务
+- 用目标 backend 镜像执行数据库迁移
+- 重建应用容器并等待健康检查通过
+
+`update infra` 会自动完成：
+- 拉取 PostgreSQL / Redis / MinIO 镜像
+- 重建基础设施容器
+- 等待健康检查通过
+- 重新同步 PostgreSQL 密码并检查 MinIO bucket
+
+### 方法二：手工拉取镜像
+
+```bash
+docker pull umuoy1/streamerhelper-backend:latest
+docker pull umuoy1/streamerhelper-frontend:latest
+./bin/control update app
+```
+
+### 方法三：本地构建
 
 ```bash
 # 1. 更新代码
