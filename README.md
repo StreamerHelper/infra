@@ -62,9 +62,7 @@ npm install
 ./bin/configure init
 
 # 4. 启动服务
-./bin/control infra up    # 启动数据库
-./bin/control migrate     # 运行迁移
-./bin/control app up      # 启动应用
+./bin/control up          # 一键启动
 ```
 
 ## 命令参考
