@@ -49,6 +49,6 @@
   },
   "upload": {
     "defaultTid": 171,
-    "defaultTitleTemplate": "{streamerName}的直播录像 {date}"
+    "defaultTitleTemplate": "{主播名}的直播录像 {日期}"
   }
 }

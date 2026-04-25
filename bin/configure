@@ -61,7 +61,7 @@ const DEFAULT_CONFIG = {
   },
   upload: {
     defaultTid: 171,
-    defaultTitleTemplate: '{streamerName}的直播录像 {date}'
+    defaultTitleTemplate: '{主播名}的直播录像 {日期}'
   }
 };
 
@@ -466,7 +466,7 @@ async function editConfig() {
     case 'upload':
       updates = await inquirer.prompt([
         { type: 'number', name: 'defaultTid', message: 'Default TID:', default: config.upload.defaultTid },
-        { type: 'input', name: 'defaultTitleTemplate', message: 'Title template:', default: config.upload.defaultTitleTemplate }
+        { type: 'input', name: 'defaultTitleTemplate', message: '标题模板:', default: config.upload.defaultTitleTemplate }
       ]);
       config.upload = { ...config.upload, ...updates };
       break;
