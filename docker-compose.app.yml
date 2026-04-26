@@ -11,6 +11,8 @@ services:
     environment:
       NODE_ENV: production
       TZ: ${TZ:-Asia/Shanghai}
+      MIDWAY_LOGGER_WRITEABLE_DIR: /app
+      LOG_DIR: /app/logs
       # App
       APP_PORT: ${APP_PORT:-7001}
       APP_KEYS: ${APP_KEYS:-streamer-helper-secret-key}
