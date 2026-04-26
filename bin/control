@@ -308,7 +308,7 @@ generate_env_file() {
         log_warn "Using browser-facing S3 endpoint ${normalized_s3_public_endpoint} instead of ${s3_public_endpoint}"
     fi
 
-    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$CONFIG_DIR" "$CONFIG_DIR/Logs/backend" "$CONFIG_DIR/Logs/nginx"
 
     cat > "$ENV_FILE" << EOF
 # Auto-generated from settings.json - DO NOT EDIT DIRECTLY

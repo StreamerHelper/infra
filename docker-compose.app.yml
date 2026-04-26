@@ -33,7 +33,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-streamerhelper-archive}
     volumes:
       - ${CONFIG_DIR:-~/.streamer-helper}/settings.json:/app/config/settings.json:ro
-      - backend_logs:/app/logs
+      - ${CONFIG_DIR:-~/.streamer-helper}/Logs/backend:/app/logs
       - backend_temp:/app/temp
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "${APP_PORT:-7001}"]
@@ -73,6 +73,7 @@ services:
       - "${HTTPS_PORT:-7443}:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${CONFIG_DIR:-~/.streamer-helper}/Logs/nginx:/var/log/nginx
     depends_on:
       - frontend
       - backend
@@ -84,5 +85,4 @@ networks:
     external: true
 
 volumes:
-  backend_logs:
   backend_temp:
