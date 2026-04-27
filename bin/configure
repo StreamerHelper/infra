@@ -11,6 +11,9 @@ const CONFIG_DIR = process.env.STREAMER_HELPER_CONFIG_DIR || path.join(os.homedi
 const CONFIG_FILE = path.join(CONFIG_DIR, 'settings.json');
 
 const DEFAULT_CONFIG = {
+  deployment: {
+    runtime: 'docker'
+  },
   app: {
     port: 7001,
     keys: '',
@@ -105,6 +108,26 @@ function printBanner() {
   console.log('');
 }
 
+function getDefaultRuntime() {
+  return os.platform() === 'darwin' && os.arch() === 'arm64' ? 'orbstack' : 'docker';
+}
+
+function getRuntimeChoices() {
+  const dockerChoice = {
+    name: 'Docker / Docker Desktop / Docker Engine',
+    value: 'docker'
+  };
+  const orbstackChoice = {
+    name: 'OrbStack (Apple Silicon Mac 推荐)',
+    value: 'orbstack',
+    ...(os.platform() === 'darwin' ? {} : { disabled: '仅支持 macOS' })
+  };
+
+  return getDefaultRuntime() === 'orbstack'
+    ? [orbstackChoice, dockerChoice]
+    : [dockerChoice, orbstackChoice];
+}
+
 async function initConfig() {
   printBanner();
   
@@ -123,6 +146,18 @@ async function initConfig() {
   }
 
   console.log(chalk.blue('Let\'s configure StreamerHelper!\n'));
+
+  // Deployment Runtime
+  console.log(chalk.cyan.bold('\n🚀 Deployment Runtime'));
+  const deploymentAnswers = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'runtime',
+      message: 'Deployment runtime:',
+      choices: getRuntimeChoices(),
+      default: getDefaultRuntime()
+    }
+  ]);
 
   // HTTP Settings
   console.log(chalk.cyan.bold('\n📡 HTTP Settings'));
@@ -275,6 +310,9 @@ async function initConfig() {
   // Build config
   const config = {
     ...DEFAULT_CONFIG,
+    deployment: {
+      runtime: deploymentAnswers.runtime
+    },
     app: {
       ...DEFAULT_CONFIG.app,
       keys: generateSecret(64),
@@ -330,6 +368,7 @@ async function editConfig() {
     name: 'section',
     message: 'Which section do you want to edit?',
     choices: [
+      { name: '🚀 Deployment Runtime', value: 'deployment' },
       { name: '📡 HTTP Settings', value: 'http' },
       { name: '🕐 Timezone', value: 'timezone' },
       { name: '🗄️  Database Settings', value: 'database' },
@@ -349,6 +388,19 @@ async function editConfig() {
   let updates = {};
 
   switch (section) {
+    case 'deployment':
+      updates = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'runtime',
+          message: 'Deployment runtime:',
+          choices: getRuntimeChoices(),
+          default: config.deployment?.runtime || getDefaultRuntime()
+        }
+      ]);
+      config.deployment = { ...config.deployment, runtime: updates.runtime };
+      break;
+
     case 'http':
       updates = await inquirer.prompt([
         { type: 'number', name: 'port', message: 'HTTP port:', default: config.http?.port || DEFAULT_CONFIG.http.port },

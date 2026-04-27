@@ -13,6 +13,10 @@ CONFIG_DIR="${STREAMER_HELPER_CONFIG_DIR:-$HOME/.streamer-helper}"
 CONFIG_FILE="$CONFIG_DIR/settings.json"
 ENV_FILE="$CONFIG_DIR/.docker-env"
 
+# Non-interactive SSH and launchd sessions often miss /usr/local/bin and
+# OrbStack's user-local shims.
+export PATH="$HOME/.orbstack/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 DEFAULT_HTTP_PORT=7080
 DEFAULT_HTTPS_PORT=7443
 DEFAULT_MINIO_API_PORT=7090
@@ -44,6 +48,69 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+get_default_runtime() {
+    local system
+    local machine
+    system="$(uname -s 2>/dev/null || printf '')"
+    machine="$(uname -m 2>/dev/null || printf '')"
+
+    if [ "$system" = "Darwin" ] && [ "$machine" = "arm64" ]; then
+        printf 'orbstack'
+    else
+        printf 'docker'
+    fi
+}
+
+get_deployment_runtime() {
+    local runtime="${STREAMER_HELPER_RUNTIME:-}"
+    local default_runtime
+    default_runtime="$(get_default_runtime)"
+
+    if [ -z "$runtime" ] && [ -f "$CONFIG_FILE" ] && command -v jq &> /dev/null; then
+        runtime="$(jq -r '.deployment.runtime // empty' "$CONFIG_FILE" 2>/dev/null || printf '')"
+    fi
+
+    case "${runtime:-$default_runtime}" in
+        docker|orbstack)
+            printf '%s' "${runtime:-$default_runtime}"
+            ;;
+        *)
+            echo -e "${YELLOW}[WARN]${NC} Unknown deployment runtime '${runtime}', falling back to ${default_runtime}" >&2
+            printf '%s' "$default_runtime"
+            ;;
+    esac
+}
+
+prepare_container_runtime() {
+    local runtime
+    runtime="$(get_deployment_runtime)"
+
+    case "$runtime" in
+        orbstack)
+            if ! command -v orb &> /dev/null; then
+                log_error "OrbStack runtime selected, but 'orb' is not installed or not in PATH."
+                log_error "Install OrbStack first: https://orbstack.dev/"
+                exit 1
+            fi
+
+            log_step "Using OrbStack runtime..."
+            if ! orb start > /dev/null 2>&1; then
+                log_error "Failed to start OrbStack. Try opening OrbStack once from macOS or run 'orb start' manually."
+                exit 1
+            fi
+
+            if ! docker context inspect orbstack > /dev/null 2>&1; then
+                log_error "OrbStack Docker context not found. Run 'orb start' and try again."
+                exit 1
+            fi
+
+            export DOCKER_CONTEXT=orbstack
+            ;;
+        docker)
+            ;;
+    esac
+}
 
 resolve_backend_version() {
     if [ -n "${CONTROL_BACKEND_VERSION:-}" ]; then
@@ -222,18 +289,25 @@ normalize_public_s3_endpoint() {
 #=============================================================#
 
 check_dependencies() {
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required. Install it: apt install jq / brew install jq"
+        exit 1
+    fi
+
+    prepare_container_runtime
+
     if ! command -v docker &> /dev/null; then
-        log_error "Docker is not installed. Please install Docker first."
+        log_error "Docker CLI is not installed. Please install Docker, Docker Desktop, or OrbStack first."
+        exit 1
+    fi
+
+    if ! docker info &> /dev/null; then
+        log_error "Docker engine is not available for runtime '$(get_deployment_runtime)'."
         exit 1
     fi
 
     if ! docker compose version &> /dev/null; then
         log_error "Docker Compose v2 is required. Please upgrade Docker."
-        exit 1
-    fi
-
-    if ! command -v jq &> /dev/null; then
-        log_error "jq is required. Install it: apt install jq / brew install jq"
         exit 1
     fi
 }
@@ -473,6 +547,9 @@ do_infra_up() {
 }
 
 do_infra_down() {
+    check_dependencies
+    check_config
+    generate_env_file
     log_step "Stopping infrastructure services..."
     docker compose -f "$COMPOSE_INFRA" down
     log_info "Infrastructure services stopped."
@@ -487,6 +564,7 @@ do_migrate() {
     echo -e "${CYAN}Running Database Migrations...${NC}"
     echo ""
 
+    check_dependencies
     check_config
     generate_env_file
 
@@ -566,6 +644,7 @@ do_app_up() {
 }
 
 do_app_down() {
+    check_dependencies
     check_config
     generate_env_file
     log_step "Stopping application services..."
@@ -590,6 +669,9 @@ do_up() {
 }
 
 do_down() {
+    check_dependencies
+    check_config
+    generate_env_file
     log_step "Stopping all services..."
     docker compose -f "$COMPOSE_APP" down 2>/dev/null || true
     docker compose -f "$COMPOSE_INFRA" down 2>/dev/null || true
@@ -674,6 +756,7 @@ do_dev_up() {
 }
 
 do_dev_down() {
+    check_dependencies
     check_config
     generate_env_file
     log_step "Stopping dev environment..."
@@ -691,6 +774,7 @@ do_dev_restart() {
 #=============================================================#
 
 do_status() {
+    check_dependencies
     echo ""
     echo -e "${CYAN}StreamerHelper Services Status${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -699,6 +783,7 @@ do_status() {
 }
 
 do_logs() {
+    check_dependencies
     local service="${1:-}"
     if [ -n "$service" ]; then
         docker logs -f "streamer-$service"
@@ -788,6 +873,7 @@ do_update_infra() {
 
 do_update_all() {
     local version="${1:-}"
+    check_dependencies
     check_config
     generate_env_file
 

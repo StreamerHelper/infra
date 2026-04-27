@@ -5,6 +5,15 @@
   "type": "object",
   "required": ["app", "database", "redis", "s3", "recorder", "poller", "upload"],
   "properties": {
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "enum": ["docker", "orbstack"],
+          "description": "部署运行时。未配置时 Linux 默认 docker，Apple Silicon Mac 默认 orbstack。docker 使用 Docker Engine；orbstack 使用 macOS OrbStack。"
+        }
+      }
+    },
     "app": {
       "type": "object",
       "properties": {
