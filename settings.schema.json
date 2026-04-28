@@ -92,6 +92,24 @@
         "defaultTid": { "type": "integer" },
         "defaultTitleTemplate": { "type": "string" }
       }
+    },
+    "platforms": {
+      "type": "object",
+      "properties": {
+        "douyin": {
+          "type": "object",
+          "properties": {
+            "cookie": {
+              "type": "string",
+              "description": "抖音网页版 Cookie。服务器访问抖音触发验证码时，可填入已在浏览器通过验证的 live.douyin.com Cookie。"
+            },
+            "userAgent": {
+              "type": "string",
+              "description": "抖音请求使用的 User-Agent。为空时使用内置桌面 Chrome UA。"
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -65,6 +65,12 @@ const DEFAULT_CONFIG = {
   upload: {
     defaultTid: 171,
     defaultTitleTemplate: '{主播名}的直播录像 {日期}'
+  },
+  platforms: {
+    douyin: {
+      cookie: '',
+      userAgent: ''
+    }
   }
 };
 
@@ -376,6 +382,7 @@ async function editConfig() {
       { name: '🔴 Recorder Settings', value: 'recorder' },
       { name: '🔄 Poller Settings', value: 'poller' },
       { name: '📤 Upload Settings', value: 'upload' },
+      { name: '🎥 Platform Request Settings', value: 'platforms' },
       new inquirer.Separator(),
       { name: '❌ Cancel', value: 'cancel' }
     ]
@@ -522,6 +529,31 @@ async function editConfig() {
       ]);
       config.upload = { ...config.upload, ...updates };
       break;
+
+    case 'platforms':
+      updates = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'douyinCookie',
+          message: 'Douyin web Cookie (empty to keep current):',
+          mask: '*'
+        },
+        {
+          type: 'input',
+          name: 'douyinUserAgent',
+          message: 'Douyin User-Agent (empty for default desktop Chrome):',
+          default: config.platforms?.douyin?.userAgent || ''
+        }
+      ]);
+      config.platforms = {
+        ...config.platforms,
+        douyin: {
+          ...config.platforms?.douyin,
+          cookie: updates.douyinCookie || config.platforms?.douyin?.cookie || '',
+          userAgent: updates.douyinUserAgent || ''
+        }
+      };
+      break;
   }
 
   saveConfig(config);
@@ -548,6 +580,9 @@ function showConfig() {
   }
   if (displayConfig.s3?.secretKey) {
     displayConfig.s3.secretKey = '***' + displayConfig.s3.secretKey.slice(-4);
+  }
+  if (displayConfig.platforms?.douyin?.cookie) {
+    displayConfig.platforms.douyin.cookie = '***' + displayConfig.platforms.douyin.cookie.slice(-4);
   }
 
   console.log(chalk.gray(`Config location: ${CONFIG_FILE}\n`));
