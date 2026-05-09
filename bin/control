@@ -312,6 +312,42 @@ check_dependencies() {
     fi
 }
 
+run_with_retries() {
+    local label="$1"
+    shift
+
+    local max_attempts="${CONTROL_RETRY_ATTEMPTS:-3}"
+    local delay="${CONTROL_RETRY_DELAY:-10}"
+    local attempt=1
+    local status=0
+
+    while true; do
+        set +e
+        "$@"
+        status=$?
+        set -e
+
+        if [ "$status" -eq 0 ]; then
+            return 0
+        fi
+
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            log_error "$label failed after $attempt attempt(s)."
+            return "$status"
+        fi
+
+        log_warn "$label failed on attempt $attempt/$max_attempts. Retrying in ${delay}s..."
+        sleep "$delay"
+        attempt=$((attempt + 1))
+        if [ "$delay" -lt 60 ]; then
+            delay=$((delay * 2))
+            if [ "$delay" -gt 60 ]; then
+                delay=60
+            fi
+        fi
+    done
+}
+
 check_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
         log_error "Configuration not found at $CONFIG_FILE"
@@ -822,7 +858,10 @@ do_update_app() {
     log_info "Frontend image: $frontend_image"
 
     log_step "Pulling application images..."
-    compose_app pull backend frontend nginx
+    if ! run_with_retries "Pulling application images" compose_app pull backend frontend nginx; then
+        log_error "Application update aborted before stopping services."
+        exit 1
+    fi
 
     log_step "Stopping current application services..."
     compose_app down
@@ -854,7 +893,10 @@ do_update_infra() {
     generate_env_file
 
     log_step "Pulling infrastructure images..."
-    docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" pull
+    if ! run_with_retries "Pulling infrastructure images" docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" pull; then
+        log_error "Infrastructure update aborted before recreating services."
+        exit 1
+    fi
 
     log_step "Recreating infrastructure services..."
     docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" up -d --force-recreate
