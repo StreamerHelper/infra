@@ -858,7 +858,7 @@ do_update_app() {
     log_info "Frontend image: $frontend_image"
 
     log_step "Pulling application images..."
-    if ! run_with_retries "Pulling application images" compose_app pull backend frontend nginx; then
+    if ! run_with_retries "Pulling application images" compose_app pull backend frontend nginx browser; then
         log_error "Application update aborted before stopping services."
         exit 1
     fi
