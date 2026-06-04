@@ -51,6 +51,18 @@
     "defaultTid": 171,
     "defaultTitleTemplate": "{主播名}的直播录像 {日期}"
   },
+  "asr": {
+    "enabled": true,
+    "provider": "aliyun",
+    "apiKey": "",
+    "apiKeyEnv": "DASHSCOPE_API_KEY",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen3-asr-flash",
+    "language": "zh-CN",
+    "chunkSeconds": 240,
+    "concurrency": 1,
+    "transcribeRecordings": true
+  },
   "platforms": {
     "douyin": {
       "cookie": "",
