@@ -19,6 +19,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: ${NODE_OPTIONS:---dns-result-order=ipv4first}
       TZ: ${TZ:-Asia/Shanghai}
       MIDWAY_LOGGER_WRITEABLE_DIR: /app
       LOG_DIR: /app/logs
@@ -45,7 +46,7 @@ services:
       # Browser automation
       DOUYIN_BROWSER_ENDPOINT: ${DOUYIN_BROWSER_ENDPOINT:-http://browser:9222}
     volumes:
-      - ${CONFIG_DIR:-~/.streamer-helper}/settings.json:/app/config/settings.json:ro
+      - ${CONFIG_DIR:-~/.streamer-helper}/settings.json:/app/config/settings.json
       - ${CONFIG_DIR:-~/.streamer-helper}/Logs/backend:/app/logs
       - backend_temp:/app/temp
     healthcheck:
