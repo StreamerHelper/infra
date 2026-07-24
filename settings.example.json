@@ -68,5 +68,23 @@
       "cookie": "",
       "userAgent": ""
     }
+  },
+  "notice": {
+    "enabled": false,
+    "appName": "StreamerHelper",
+    "maxContentLength": 4000,
+    "logger": {
+      "enabled": true,
+      "level": "error",
+      "cooldownSeconds": 300
+    },
+    "channels": {
+      "serverChan": {
+        "enabled": false,
+        "sendKey": "",
+        "endpoint": "",
+        "timeoutMs": 10000
+      }
+    }
   }
 }

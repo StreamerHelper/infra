@@ -125,6 +125,77 @@
           }
         }
       }
+    },
+    "notice": {
+      "type": "object",
+      "description": "统一通知服务。可主动调用 NoticeService，也可从应用 logger 按级别捕获通知。",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "通知总开关。关闭时不会发送任何通知。"
+        },
+        "appName": {
+          "type": "string",
+          "default": "StreamerHelper",
+          "description": "通知标题中显示的应用名称。"
+        },
+        "maxContentLength": {
+          "type": "integer",
+          "minimum": 256,
+          "default": 4000,
+          "description": "单条通知正文的最大字符数。"
+        },
+        "logger": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "是否挂载 logger Transport 自动发送通知。"
+            },
+            "level": {
+              "enum": ["error", "warn", "info", "debug"],
+              "default": "error",
+              "description": "最低捕获级别。error 最安全，warn 会同时捕获 warn 和 error。"
+            },
+            "cooldownSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 300,
+              "description": "相同日志通知的去重冷却时间，避免轮询错误产生通知风暴。"
+            }
+          }
+        },
+        "channels": {
+          "type": "object",
+          "properties": {
+            "serverChan": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "sendKey": {
+                  "type": "string",
+                  "description": "Server酱 SendKey。生产环境推荐使用 SERVERCHAN_SENDKEY 环境变量。"
+                },
+                "endpoint": {
+                  "type": "string",
+                  "default": "",
+                  "description": "可选自定义地址模板，支持 {sendKey} 和 {uid}；留空时根据 SendKey 自动选择 Turbo 或 Server酱³ API。"
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 1000,
+                  "default": 10000
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

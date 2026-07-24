@@ -71,6 +71,24 @@ const DEFAULT_CONFIG = {
       cookie: '',
       userAgent: ''
     }
+  },
+  notice: {
+    enabled: false,
+    appName: 'StreamerHelper',
+    maxContentLength: 4000,
+    logger: {
+      enabled: true,
+      level: 'error',
+      cooldownSeconds: 300
+    },
+    channels: {
+      serverChan: {
+        enabled: false,
+        sendKey: '',
+        endpoint: '',
+        timeoutMs: 10000
+      }
+    }
   }
 };
 
@@ -383,6 +401,7 @@ async function editConfig() {
       { name: '🔄 Poller Settings', value: 'poller' },
       { name: '📤 Upload Settings', value: 'upload' },
       { name: '🎥 Platform Request Settings', value: 'platforms' },
+      { name: '🔔 Notice Settings', value: 'notice' },
       new inquirer.Separator(),
       { name: '❌ Cancel', value: 'cancel' }
     ]
@@ -554,6 +573,92 @@ async function editConfig() {
         }
       };
       break;
+
+    case 'notice':
+      const currentNotice = {
+        ...DEFAULT_CONFIG.notice,
+        ...config.notice,
+        logger: {
+          ...DEFAULT_CONFIG.notice.logger,
+          ...config.notice?.logger
+        },
+        channels: {
+          serverChan: {
+            ...DEFAULT_CONFIG.notice.channels.serverChan,
+            ...config.notice?.channels?.serverChan
+          }
+        }
+      };
+      updates = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'enabled',
+          message: 'Enable notice service?',
+          default: currentNotice.enabled
+        },
+        {
+          type: 'input',
+          name: 'appName',
+          message: 'Application name in notice titles:',
+          default: currentNotice.appName
+        },
+        {
+          type: 'confirm',
+          name: 'loggerEnabled',
+          message: 'Capture application logs?',
+          default: currentNotice.logger.enabled
+        },
+        {
+          type: 'list',
+          name: 'loggerLevel',
+          message: 'Minimum log level to notify:',
+          choices: ['error', 'warn', 'info', 'debug'],
+          default: currentNotice.logger.level,
+          when: answers => answers.loggerEnabled
+        },
+        {
+          type: 'number',
+          name: 'cooldownSeconds',
+          message: 'Duplicate log cooldown (seconds):',
+          default: currentNotice.logger.cooldownSeconds,
+          when: answers => answers.loggerEnabled
+        },
+        {
+          type: 'confirm',
+          name: 'serverChanEnabled',
+          message: 'Enable ServerChan channel?',
+          default: currentNotice.channels.serverChan.enabled
+        },
+        {
+          type: 'password',
+          name: 'serverChanSendKey',
+          message: 'ServerChan SendKey (empty to keep current):',
+          mask: '*',
+          when: answers => answers.serverChanEnabled
+        }
+      ]);
+      config.notice = {
+        ...currentNotice,
+        enabled: updates.enabled,
+        appName: updates.appName,
+        logger: {
+          ...currentNotice.logger,
+          enabled: updates.loggerEnabled,
+          level: updates.loggerLevel || currentNotice.logger.level,
+          cooldownSeconds:
+            updates.cooldownSeconds ?? currentNotice.logger.cooldownSeconds
+        },
+        channels: {
+          serverChan: {
+            ...currentNotice.channels.serverChan,
+            enabled: updates.serverChanEnabled,
+            sendKey:
+              updates.serverChanSendKey ||
+              currentNotice.channels.serverChan.sendKey
+          }
+        }
+      };
+      break;
   }
 
   saveConfig(config);
@@ -583,6 +688,10 @@ function showConfig() {
   }
   if (displayConfig.platforms?.douyin?.cookie) {
     displayConfig.platforms.douyin.cookie = '***' + displayConfig.platforms.douyin.cookie.slice(-4);
+  }
+  if (displayConfig.notice?.channels?.serverChan?.sendKey) {
+    const sendKey = displayConfig.notice.channels.serverChan.sendKey;
+    displayConfig.notice.channels.serverChan.sendKey = '***' + sendKey.slice(-4);
   }
 
   console.log(chalk.gray(`Config location: ${CONFIG_FILE}\n`));
