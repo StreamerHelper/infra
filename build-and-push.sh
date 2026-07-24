@@ -161,6 +161,7 @@ build_and_push() {
 # Note: Dockerfiles are in infra/, but build context is the respective app directory
 build_and_push "backend" "$SCRIPT_DIR/Dockerfile.backend" "$BACKEND_DIR"
 build_and_push "frontend" "$SCRIPT_DIR/Dockerfile.frontend" "$FRONTEND_DIR"
+build_and_push "browser" "$SCRIPT_DIR/Dockerfile.browser" "$SCRIPT_DIR"
 
 # Done
 echo "╔═══════════════════════════════════════════════════════════╗"
@@ -169,6 +170,7 @@ echo "╠═══════════════════════�
 echo "║  Images built:                                            ║"
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-backend:$VERSION         "
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-frontend:$VERSION        "
+echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-browser:$VERSION         "
 if [ -z "${SKIP_PUSH:-}" ]; then
 echo "║                                                           ║"
 echo "║  Images pushed to registry                                ║"

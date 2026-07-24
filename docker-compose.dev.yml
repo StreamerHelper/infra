@@ -3,6 +3,12 @@
 # 与 docker-compose.app.yml 配合使用
 
 services:
+  browser:
+    image: infra-browser:local
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+
   backend:
     image: infra-backend:local
     build:

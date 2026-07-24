@@ -5,7 +5,7 @@
 services:
   # Shared browser automation runtime for web login flows.
   browser:
-    image: chromedp/headless-shell:latest
+    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-browser:${BROWSER_VERSION:-latest}
     container_name: streamer-browser
     restart: unless-stopped
     shm_size: "1gb"
