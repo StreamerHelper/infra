@@ -8,7 +8,7 @@ COPY package.json pnpm-lock.yaml* package-lock.json* ./
 
 # Install dependencies (prefer pnpm if lock file exists)
 RUN if [ -f pnpm-lock.yaml ]; then \
-        corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile; \
+        corepack enable && corepack prepare pnpm@10.33.0 --activate && pnpm install --frozen-lockfile; \
     elif [ -f package-lock.json ]; then \
         npm ci; \
     else \
