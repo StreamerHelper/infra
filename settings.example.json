@@ -76,7 +76,7 @@
     "logger": {
       "enabled": true,
       "level": "error",
-      "cooldownSeconds": 300
+      "fatigueSeconds": 300
     },
     "channels": {
       "serverChan": {

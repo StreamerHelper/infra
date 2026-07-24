@@ -79,7 +79,7 @@ const DEFAULT_CONFIG = {
     logger: {
       enabled: true,
       level: 'error',
-      cooldownSeconds: 300
+      fatigueSeconds: 300
     },
     channels: {
       serverChan: {
@@ -589,6 +589,11 @@ async function editConfig() {
           }
         }
       };
+      currentNotice.logger.fatigueSeconds =
+        config.notice?.logger?.fatigueSeconds ??
+        config.notice?.logger?.cooldownSeconds ??
+        DEFAULT_CONFIG.notice.logger.fatigueSeconds;
+      delete currentNotice.logger.cooldownSeconds;
       updates = await inquirer.prompt([
         {
           type: 'confirm',
@@ -618,9 +623,9 @@ async function editConfig() {
         },
         {
           type: 'number',
-          name: 'cooldownSeconds',
-          message: 'Duplicate log cooldown (seconds):',
-          default: currentNotice.logger.cooldownSeconds,
+          name: 'fatigueSeconds',
+          message: 'Notification fatigue time (seconds):',
+          default: currentNotice.logger.fatigueSeconds,
           when: answers => answers.loggerEnabled
         },
         {
@@ -645,8 +650,8 @@ async function editConfig() {
           ...currentNotice.logger,
           enabled: updates.loggerEnabled,
           level: updates.loggerLevel || currentNotice.logger.level,
-          cooldownSeconds:
-            updates.cooldownSeconds ?? currentNotice.logger.cooldownSeconds
+          fatigueSeconds:
+            updates.fatigueSeconds ?? currentNotice.logger.fatigueSeconds
         },
         channels: {
           serverChan: {

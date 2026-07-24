@@ -159,11 +159,11 @@
               "default": "error",
               "description": "最低捕获级别。error 最安全，warn 会同时捕获 warn 和 error。"
             },
-            "cooldownSeconds": {
+            "fatigueSeconds": {
               "type": "integer",
               "minimum": 0,
               "default": 300,
-              "description": "相同日志通知的去重冷却时间，避免轮询错误产生通知风暴。"
+              "description": "相同通知的疲劳时间（秒）。疲劳期内不重复发送，默认 5 分钟。"
             }
           }
         },
