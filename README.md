@@ -1,180 +1,152 @@
-# StreamerHelper Infrastructure
+# StreamerHelper Infra
 
-StreamerHelper 的 Docker 部署配置和管理工具。
+StreamerHelper 的部署与运行控制仓库。这里维护 Docker Compose 编排、配置生成、数据库迁移和版本更新入口。
 
-## 架构概览
+[快速开始](#快速开始) · [服务拓扑](#服务拓扑) · [命令参考](#命令参考) · [配置](#配置) · [本地联调](#本地联调) · [部署手册](./DEPLOY.md)
 
-```
-                    ┌─────────────┐
-                    │   Nginx     │ :7080/:7443
-                    │  (反向代理)  │
-                    └──────┬──────┘
-                           │
-       ┌───────────────────┼───────────────────┐
-       │                   │                   │
-       ▼                   ▼                   ▼
-┌──────────┐        ┌──────────┐        ┌──────────┐
-│ Frontend │        │ Backend  │        │ Bull     │
-│ (Next.js)│        │(MidwayJS)│        │ Board    │
-│  :3000   │        │  :7001   │        │  /ui/    │
-└──────────┘        └────┬─────┘        └──────────┘
-                         │
-         ┌───────────────┼───────────────┐
-         │               │               │
-         ▼               ▼               ▼
-  ┌──────────┐    ┌──────────┐    ┌──────────┐
-  │PostgreSQL│    │  Redis   │    │  MinIO   │
-  │  :5432   │    │  :6379   │    │:7090/7091│
-  └──────────┘    └──────────┘    └──────────┘
-```
+## 仓库职责
 
-## 文件结构
+| 范围 | 内容 |
+| --- | --- |
+| 配置 | 生成并校验 `settings.json` 与容器环境变量 |
+| 编排 | 管理 PostgreSQL、Redis、MinIO、后端、前端和 Nginx |
+| 数据库 | 在应用启动或更新前执行 TypeORM 迁移 |
+| 发布 | 拉取指定版本镜像并重建应用容器 |
+| 开发 | 从相邻源码仓库构建镜像，启动本地联调环境 |
 
-```
-infra/
-├── bin/
-│   ├── configure              # 交互式配置工具 (Node.js)
-│   └── control                # 容器管理脚本 (Bash)
-├── docker-compose.infra.yml   # 基础设施: PostgreSQL, Redis, MinIO
-├── docker-compose.app.yml     # 应用服务: Backend, Frontend, Nginx
-├── docker-compose.dev.yml     # 本地开发构建覆盖
-├── Dockerfile.backend         # 后端镜像构建
-├── Dockerfile.frontend        # 前端镜像构建
-├── nginx/nginx.conf           # Nginx 反向代理配置
-├── build-and-push.sh          # CI/CD 镜像构建脚本
-├── settings.example.json      # 配置文件示例
-└── settings.schema.json       # 配置文件 JSON Schema
-```
+业务代码分别位于 [web-server](https://github.com/StreamerHelper/web-server) 和 [web](https://github.com/StreamerHelper/web)；产品说明见 [StreamerHelper](https://github.com/StreamerHelper/StreamerHelper)。
 
 ## 快速开始
 
-详细部署指南请参阅 [DEPLOY.md](./DEPLOY.md)。
+### 环境要求
+
+| 依赖 | 最低版本或建议 |
+| --- | --- |
+| Docker Engine | 20.10+ |
+| Docker Compose | v2 |
+| Node.js | 18+ |
+| jq | 任意受支持版本 |
+| 内存 | 4 GB 以上 |
+
+在 Apple Silicon macOS 上默认优先使用 OrbStack；其他环境默认使用 Docker。运行时可以在配置中调整。
 
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/StreamerHelper/infra.git
 cd infra
 
-# 2. 安装依赖 (用于配置工具)
-npm install
-
-# 3. 初始化配置
+npm ci
 ./bin/configure init
-
-# 4. 启动服务
-./bin/control up          # 一键启动
-```
-
-## 命令参考
-
-### 配置管理 (`./bin/configure`)
-
-| 命令 | 说明 |
-|------|------|
-| `init` | 交互式初始化配置 |
-| `edit` | 编辑现有配置 |
-| `show` | 显示当前配置 (密码脱敏) |
-
-### 容器管理 (`./bin/control`)
-
-| 命令 | 说明 |
-|------|------|
-| `infra up` | 启动基础设施 (PostgreSQL, Redis, MinIO) |
-| `infra down` | 停止基础设施 |
-| `migrate` | 运行数据库迁移 |
-| `app up` | 启动应用服务 (Backend, Frontend, Nginx) |
-| `app down` | 停止应用服务 |
-| `up` | 一键启动全部 (infra + migrate + app) |
-| `down` | 停止所有服务 |
-| `status` | 查看服务状态 |
-| `logs [service]` | 查看日志 |
-| `dev up` | 本地构建并启动 |
-| `dev build` | 仅构建本地镜像 |
-
-## 访问地址
-
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 应用首页 | http://localhost:7080 | Web UI |
-| API | http://localhost:7080/api | 后端接口 |
-| Bull Board | http://localhost:7080/ui | 队列监控 |
-| MinIO Console | http://localhost:7091 | 对象存储管理 |
-
-## 配置文件
-
-配置保存在 `~/.streamer-helper/settings.json`，包含：
-
-- **app**: 应用密钥
-- **http**: HTTP/HTTPS 端口
-- **database**: PostgreSQL 连接信息
-- **redis**: Redis 连接信息
-- **s3/minio**: 对象存储配置
-- **recorder**: 录制参数
-- **poller**: 轮询参数
-- **upload**: 上传参数
-
-详见 [settings.example.json](./settings.example.json)。
-
-部署时请注意：
-- `http.port` / `httpsPort` / `minio.apiPort` / `minio.consolePort` 只影响宿主机暴露端口。
-- Docker 内置 MinIO 默认也统一使用 `minio:7090`；如果你改了 `minio.apiPort`，`s3.endpoint` 默认会跟着改成 `http://minio:<apiPort>`。
-- 后端容器内部端口固定为 `7001`，对外访问端口由 Nginx 的 `http.port` 控制。
-
-## 开发者指南
-
-### 本地开发
-
-```bash
-# 启动基础设施
-./bin/control infra up
-
-# 本地构建并运行
-./bin/control dev up
-```
-
-### 构建镜像
-
-```bash
-# 构建并推送到 Docker Hub
-./build-and-push.sh v1.0.0
-
-# 仅构建不推送
-./build-and-push.sh v1.0.0 --skip-push
-```
-
-### CI/CD
-
-通过 GitHub Actions 自动构建:
-- **触发**: 推送 `v*` 标签
-- **手动**: 在 Actions 页面手动触发
-
-需要配置 GitHub Secrets:
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-
-## 故障排除
-
-### 后端启动失败
-
-```bash
-# 检查数据库连接
-docker exec streamer-postgres pg_isready
-
-# 查看后端日志
-./bin/control logs backend
-```
-
-### 数据库密码不匹配
-
-PostgreSQL 密码仅在首次初始化时生效。如需重置：
-
-```bash
-# 警告: 会清空所有数据
-./bin/control down
-docker volume rm infra_postgres_data
 ./bin/control up
 ```
 
+`control up` 会依次启动基础设施、执行数据库迁移并启动应用服务。
+
+启动后可访问：
+
+| 入口 | 默认地址 |
+| --- | --- |
+| Web UI | http://localhost:7080 |
+| API | http://localhost:7080/api |
+| Bull Board | http://localhost:7080/ui |
+| MinIO Console | http://localhost:7091 |
+
+生产主机、安全配置、备份与升级说明见 [DEPLOY.md](./DEPLOY.md)。
+
+## 服务拓扑
+
+外部请求由 Nginx 统一接入，应用容器只在 Compose 网络内暴露服务端口。
+
+| 服务 | 容器内端口 | 默认宿主机端口 | 用途 |
+| --- | ---: | ---: | --- |
+| Nginx | 80 / 443 | 7080 / 7443 | Web、API 和队列面板入口 |
+| Frontend | 3000 | — | Next.js 管理界面 |
+| Backend | 7001 | — | API、调度和后台任务 |
+| Browser | 9222 | — | 抖音网页登录与二次验证 |
+| PostgreSQL | 5432 | — | 业务数据 |
+| Redis | 6379 | — | 缓存与 BullMQ |
+| MinIO | 7090 / 7091 | 7090 / 7091 | 对象存储与管理控制台 |
+
+`http.port`、`http.httpsPort` 和 MinIO 端口控制宿主机映射；Backend、Frontend 与 Browser 的内部端口保持固定。
+
+## 命令参考
+
+### 配置工具
+
+| 命令 | 作用 |
+| --- | --- |
+| `./bin/configure init` | 创建初始配置 |
+| `./bin/configure edit` | 修改已有配置 |
+| `./bin/configure show` | 脱敏显示当前配置 |
+
+### 服务控制
+
+| 命令 | 作用 |
+| --- | --- |
+| `./bin/control up` | 启动基础设施、迁移数据库并启动应用 |
+| `./bin/control down` | 停止全部服务 |
+| `./bin/control infra up` | 仅启动 PostgreSQL、Redis 和 MinIO |
+| `./bin/control infra down` | 停止基础设施 |
+| `./bin/control migrate` | 执行数据库迁移 |
+| `./bin/control app up` | 启动应用服务 |
+| `./bin/control app down` | 停止应用服务 |
+| `./bin/control update app [version]` | 更新应用镜像并重建应用服务 |
+| `./bin/control update infra` | 更新基础设施镜像 |
+| `./bin/control update all [version]` | 更新全部镜像 |
+| `./bin/control status` | 查看容器状态 |
+| `./bin/control logs [service]` | 持续查看全部或指定服务日志 |
+
+更新应用时会先拉取镜像，再停止应用、执行迁移并重建应用容器。PostgreSQL、Redis 和 MinIO 无需随应用更新重启。
+
+## 配置
+
+配置工具生成以下本地文件：
+
+| 文件 | 用途 |
+| --- | --- |
+| `~/.streamer-helper/settings.json` | 后端运行配置 |
+| `~/.streamer-helper/.docker-env` | Compose 环境变量 |
+
+字段定义见 [settings.example.json](./settings.example.json) 和 [settings.schema.json](./settings.schema.json)。配置覆盖数据库、Redis、对象存储、录制、轮询、上传、通知与容器运行时。
+
+配置文件包含密钥和访问凭据，不应提交到版本控制。排查配置时使用 `./bin/configure show` 获取脱敏输出。
+
+## 本地联调
+
+源码构建模式要求三个仓库处于同一父目录：
+
+```text
+streamer-helper/
+├── infra/
+├── web-server/
+└── web/
+```
+
+常用命令：
+
+| 命令 | 作用 |
+| --- | --- |
+| `./bin/control dev up` | 构建并启动本地源码 |
+| `./bin/control dev down` | 停止开发环境 |
+| `./bin/control dev restart` | 重启开发环境 |
+| `./bin/control dev build [service]` | 构建全部或指定本地镜像 |
+
+后端与前端各自的开发命令见 [web-server README](https://github.com/StreamerHelper/web-server#readme) 和 [web README](https://github.com/StreamerHelper/web#readme)。
+
+## 运维入口
+
+```bash
+# 查看总体状态
+./bin/control status
+
+# 跟踪后端日志
+./bin/control logs backend
+
+# 仅更新应用，不重启数据服务
+./bin/control update app
+```
+
+部署前应建立 PostgreSQL 与 MinIO 的独立备份。具体备份、恢复和故障排查流程统一维护在 [DEPLOY.md](./DEPLOY.md)。
+
 ## License
 
-MIT
+[MIT](https://github.com/StreamerHelper/StreamerHelper/blob/main/LICENSE)
