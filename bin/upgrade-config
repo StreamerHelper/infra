@@ -1,0 +1,71 @@
+#!/bin/bash
+
+set -u
+
+config_file="${1:-}"
+if [ -z "$config_file" ]; then
+    echo "Usage: upgrade-config <settings.json>" >&2
+    exit 2
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required to validate and upgrade settings.json." >&2
+    exit 1
+fi
+
+if [ ! -f "$config_file" ]; then
+    echo "Configuration not found: $config_file" >&2
+    exit 1
+fi
+
+if ! jq -e -s 'length == 1 and (.[0] | type == "object")' \
+    "$config_file" >/dev/null 2>&1; then
+    echo "Configuration is not a valid JSON object: $config_file" >&2
+    exit 1
+fi
+
+has_deprecated_cookie="$(
+    jq -r '
+        if (.platforms? | type) == "object" then
+            if (.platforms.douyin? | type) == "object" then
+                (.platforms.douyin | has("cookie"))
+            else
+                false
+            end
+        else
+            false
+        end
+    ' "$config_file"
+)"
+
+if [ "$has_deprecated_cookie" != "true" ]; then
+    exit 0
+fi
+
+config_mode="$(stat -c '%a' "$config_file" 2>/dev/null || true)"
+if [[ ! "$config_mode" =~ ^[0-7]{3,4}$ ]]; then
+    config_mode="$(stat -f '%Lp' "$config_file" 2>/dev/null || true)"
+fi
+if [[ ! "$config_mode" =~ ^[0-7]{3,4}$ ]]; then
+    echo "Unable to determine configuration permissions: $config_file" >&2
+    exit 1
+fi
+
+config_dir="$(cd "$(dirname "$config_file")" && pwd)"
+temporary_file="$(mktemp "$config_dir/.settings.json.upgrade.XXXXXX")" || exit 1
+cleanup() {
+    rm -f "$temporary_file"
+}
+trap cleanup EXIT
+
+if ! jq 'del(.platforms.douyin.cookie)' "$config_file" > "$temporary_file" \
+    || ! jq -e -s 'length == 1 and (.[0] | type == "object")' \
+        "$temporary_file" >/dev/null 2>&1 \
+    || ! chmod "$config_mode" "$temporary_file" \
+    || ! mv -f "$temporary_file" "$config_file"; then
+    echo "Failed to upgrade configuration safely: $config_file" >&2
+    exit 1
+fi
+
+trap - EXIT
+echo "Removed deprecated platforms.douyin.cookie from settings.json."

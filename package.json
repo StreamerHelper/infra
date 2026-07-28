@@ -9,7 +9,8 @@
   },
   "scripts": {
     "configure": "node bin/configure",
-    "control": "node bin/control"
+    "control": "node bin/control",
+    "test": "bash test/control-release-pin.test.sh && bash test/compose-release-version.test.sh && bash test/immutable-tag-probe.test.sh && bash test/publish-preflight.test.sh && bash test/config-upgrade.test.sh"
   },
   "dependencies": {
     "chalk": "^5.3.0",

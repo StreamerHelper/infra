@@ -1,7 +1,8 @@
-FROM chromedp/headless-shell:latest
+FROM chromedp/headless-shell:148.0.7778.97
 
 USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0700 /data/profile

@@ -75,34 +75,34 @@ npm install
 - Redis
 - MinIO
 
-### 第四步：运行数据库迁移
+### 第四步：安装明确版本并启动应用
 
 ```bash
-./bin/control migrate
+RELEASE_VERSION=v1.2.3 # 替换为要安装的已发布版本
+./bin/control update app "$RELEASE_VERSION"
 ```
 
-首次运行会创建所有数据库表。
+该命令会拉取同版本的全部应用镜像、创建数据库表、启动应用，并在健康检查通过后写入 release pin。
 
-### 第五步：启动应用
+### 第五步：验证访问
 
-```bash
-./bin/control app up
-```
-
-等待后端健康检查通过后，即可访问：
+等待 Backend 和 Frontend 健康检查通过后，即可访问：
 
 | 服务 | 地址 |
 |------|------|
 | 应用首页 | http://localhost:7080 |
 | MinIO 控制台 | http://localhost:7091 |
 
-### 一键启动 (可选)
+### 首次一键部署 (可选)
 
-上述步骤也可以用一条命令完成：
+配置完成后，也可以让一条命令完成基础设施与应用的首次部署：
 
 ```bash
-./bin/control up
+RELEASE_VERSION=v1.2.3 # 替换为要安装的已发布版本
+./bin/control update all "$RELEASE_VERSION"
 ```
+
+首次成功后，普通的 `./bin/control up` 会使用已写入的 release pin；没有有效 pin 时它会明确失败，不会回退到 `latest`。
 
 ---
 
@@ -113,7 +113,8 @@ npm install
 ```
 ~/.streamer-helper/
 ├── settings.json      # 主配置文件
-└── .docker-env        # Docker 环境变量 (自动生成)
+├── .docker-env        # Docker 环境变量 (自动生成)
+└── release-version    # 当前应用发布版本 (非密钥，首次安装或更新成功后原子写入)
 ```
 
 ### 查看当前配置
@@ -123,6 +124,7 @@ npm install
 ```
 
 敏感信息 (密码、密钥) 会脱敏显示。
+控制或配置工具加载旧配置时，会先验证 JSON，再原子删除已废弃的 `platforms.douyin.cookie`。升级保留原文件权限、`userAgent` 和其它字段，日志不会输出旧 Cookie 值；JSON 无效时拒绝改写。
 
 ### 修改配置
 
@@ -175,6 +177,8 @@ NAMES               STATUS                  PORTS
 streamer-nginx      Up 2 hours              0.0.0.0:7080->80/tcp
 streamer-frontend   Up 2 hours (healthy)    3000/tcp
 streamer-backend    Up 2 hours (healthy)    7001/tcp
+streamer-browser    Up 2 hours (healthy)    9222/tcp
+streamer-douyin-resolver Up 2 hours (healthy) 7100/tcp
 streamer-postgres   Up 2 hours (healthy)    5432/tcp
 streamer-redis      Up 2 hours (healthy)    6379/tcp
 streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
@@ -220,27 +224,44 @@ streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
 ### 方法一：使用 `update` 命令 (推荐)
 
 ```bash
-# 更新后端、前端和 nginx
-./bin/control update app
-
-# 指定版本更新后端和前端
+# 使用同一版本更新全部应用镜像
 ./bin/control update app v1.2.3
 
 # 更新 PostgreSQL、Redis、MinIO
 ./bin/control update infra
 
-# 全量更新（基础设施 + 应用）
-./bin/control update all
-
 # 全量更新并锁定应用版本
 ./bin/control update all v1.2.3
 ```
 
+应用更新必须提供 `latest` 以外的明确版本；发布流程拒绝覆盖已经存在的版本标签。
+生产应用镜像默认位于 `ghcr.io/streamerhelper`。通过 CI tag 发布时，infra、web-server 和 web 三个仓库必须先创建同名 tag；手动触发工作流时则明确提供两个源码仓库的 tag 或 commit。工作流使用 `github.actor` 与当前任务的 `GITHUB_TOKEN` 登录 GHCR，工作流摘要会记录最终构建的三个源码 SHA。
+
 `update app` 会自动完成：
-- 拉取 backend / frontend / nginx 镜像
-- 停止当前应用服务
-- 用目标 backend 镜像执行数据库迁移
-- 重建应用容器并等待健康检查通过
+- 拉取 backend / frontend / browser / douyin-resolver 镜像
+- 在当前应用保持在线时，用目标 backend 镜像执行数据库迁移
+- 迁移成功后重建应用容器
+- 等待 Backend 和 Frontend 健康；Browser 或 Douyin Resolver 异常时报告降级但不阻断其它平台
+- 仅在必要健康检查通过后原子更新 `~/.streamer-helper/release-version`
+
+后续普通的 `app down`、`app up`、`status` 和 `logs` 都会读取该 release pin。没有 pin 或 pin 损坏时，生产模式启动会明确失败，不会退回到 `latest`；Compose 应用文件本身也要求四个应用版本变量非空。请通过 `bin/control` 执行生产启停，其中停止命令不依赖 pin。更新失败时会保留更新前的运行状态：原来运行则保持或恢复原 pin 对应的应用，原来停止则清理可能创建的候选容器并保持停止。`update all` 会记住主动停止应用之前的状态并传递给同一恢复路径。
+
+如果镜像已经由其它机器导入服务器，可以显式跳过 registry pull：
+
+```bash
+./bin/control update app v1.2.3 --preloaded
+```
+
+该模式会先验证以下四个精确标签均已存在于本机：
+
+```text
+ghcr.io/streamerhelper/streamerhelper-backend:v1.2.3
+ghcr.io/streamerhelper/streamerhelper-frontend:v1.2.3
+ghcr.io/streamerhelper/streamerhelper-browser:v1.2.3
+ghcr.io/streamerhelper/streamerhelper-douyin-resolver:v1.2.3
+```
+
+它只跳过拉取步骤，数据库迁移、容器重建、健康检查、release pin 和失败回滚与默认更新路径完全一致。任一镜像缺失时会在迁移和重建前退出。
 
 `update infra` 会自动完成：
 - 拉取 PostgreSQL / Redis / MinIO 镜像
@@ -251,12 +272,26 @@ streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
 ### 方法二：手工拉取镜像
 
 ```bash
-docker pull umuoy1/streamerhelper-backend:latest
-docker pull umuoy1/streamerhelper-frontend:latest
-./bin/control update app
+VERSION=v1.2.3
+docker pull "ghcr.io/streamerhelper/streamerhelper-backend:${VERSION}"
+docker pull "ghcr.io/streamerhelper/streamerhelper-frontend:${VERSION}"
+docker pull "ghcr.io/streamerhelper/streamerhelper-browser:${VERSION}"
+docker pull "ghcr.io/streamerhelper/streamerhelper-douyin-resolver:${VERSION}"
+./bin/control update app "$VERSION" --preloaded
 ```
 
-### 方法三：本地构建
+### 方法三：构建并发布生产镜像
+
+发布者需要先登录 GHCR：
+
+```bash
+docker login ghcr.io
+./build-and-push.sh v1.2.3
+```
+
+脚本会在构建前验证本地 credential，并对四个目标标签执行 fail-closed 的不可变性探测。缺少登录、权限不足、网络异常或 registry 无法明确证明标签不存在时都会停止，不会开始发布；成功后生成 `linux/amd64` 与 `linux/arm64` 双架构镜像。
+
+### 方法四：本地开发构建
 
 ```bash
 # 1. 更新代码
@@ -381,7 +416,8 @@ rm -rf ~/.streamer-helper
 
 # 重新部署
 ./bin/configure init
-./bin/control up
+RELEASE_VERSION=v1.2.3 # 替换为要安装的已发布版本
+./bin/control update all "$RELEASE_VERSION"
 ```
 
 ---

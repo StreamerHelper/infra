@@ -4,11 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import { spawnSync } from 'child_process';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 
 const CONFIG_DIR = process.env.STREAMER_HELPER_CONFIG_DIR || path.join(os.homedir(), '.streamer-helper');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'settings.json');
+const UPGRADE_SCRIPT = path.join(path.dirname(fs.realpathSync(process.argv[1])), 'upgrade-config');
 
 const DEFAULT_CONFIG = {
   deployment: {
@@ -68,7 +70,6 @@ const DEFAULT_CONFIG = {
   },
   platforms: {
     douyin: {
-      cookie: '',
       userAgent: ''
     }
   },
@@ -106,6 +107,14 @@ function generateSecret(length = 32) {
 
 function loadConfig() {
   if (fs.existsSync(CONFIG_FILE)) {
+    const upgrade = spawnSync('bash', [UPGRADE_SCRIPT, CONFIG_FILE], {
+      stdio: 'inherit'
+    });
+    if (upgrade.error || upgrade.status !== 0) {
+      console.error(chalk.red('Failed to validate or upgrade config file.'));
+      return null;
+    }
+
     try {
       return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
     } catch (e) {
@@ -372,9 +381,8 @@ async function initConfig() {
   console.log(chalk.green.bold('\n✅ Configuration saved!'));
   console.log(chalk.gray(`   Location: ${CONFIG_FILE}`));
   console.log(chalk.blue('\n   Next steps:'));
-  console.log(chalk.blue('     ./bin/control infra up   # Start databases'));
-  console.log(chalk.blue('     ./bin/control migrate    # Run migrations'));
-  console.log(chalk.blue('     ./bin/control app up     # Start application'));
+  console.log(chalk.blue('     RELEASE_VERSION=v1.2.3   # Replace with a published version'));
+  console.log(chalk.blue('     ./bin/control update all "$RELEASE_VERSION"'));
   console.log('');
 }
 
@@ -552,23 +560,19 @@ async function editConfig() {
     case 'platforms':
       updates = await inquirer.prompt([
         {
-          type: 'password',
-          name: 'douyinCookie',
-          message: 'Douyin web Cookie (empty to keep current):',
-          mask: '*'
-        },
-        {
           type: 'input',
           name: 'douyinUserAgent',
-          message: 'Douyin User-Agent (empty for default desktop Chrome):',
+          message: 'Legacy Douyin HTTP User-Agent override (empty for default):',
           default: config.platforms?.douyin?.userAgent || ''
         }
       ]);
+      const douyinConfig = { ...(config.platforms?.douyin || {}) };
+      // Raw Cookie import was retired in favor of the persistent browser profile.
+      delete douyinConfig.cookie;
       config.platforms = {
         ...config.platforms,
         douyin: {
-          ...config.platforms?.douyin,
-          cookie: updates.douyinCookie || config.platforms?.douyin?.cookie || '',
+          ...douyinConfig,
           userAgent: updates.douyinUserAgent || ''
         }
       };
@@ -690,9 +694,6 @@ function showConfig() {
   }
   if (displayConfig.s3?.secretKey) {
     displayConfig.s3.secretKey = '***' + displayConfig.s3.secretKey.slice(-4);
-  }
-  if (displayConfig.platforms?.douyin?.cookie) {
-    displayConfig.platforms.douyin.cookie = '***' + displayConfig.platforms.douyin.cookie.slice(-4);
   }
   if (displayConfig.notice?.channels?.serverChan?.sendKey) {
     const sendKey = displayConfig.notice.channels.serverChan.sendKey;

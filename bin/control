@@ -12,6 +12,12 @@ INFRA_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_DIR="${STREAMER_HELPER_CONFIG_DIR:-$HOME/.streamer-helper}"
 CONFIG_FILE="$CONFIG_DIR/settings.json"
 ENV_FILE="$CONFIG_DIR/.docker-env"
+RELEASE_VERSION_FILE="$CONFIG_DIR/release-version"
+
+CONTROL_PINNED_RELEASE_VERSION=""
+if [ -r "$RELEASE_VERSION_FILE" ]; then
+    IFS= read -r CONTROL_PINNED_RELEASE_VERSION < "$RELEASE_VERSION_FILE" || true
+fi
 
 # Non-interactive SSH and launchd sessions often miss /usr/local/bin and
 # OrbStack's user-local shims.
@@ -30,11 +36,13 @@ COMPOSE_APP="$INFRA_DIR/docker-compose.app.yml"
 COMPOSE_DEV="$INFRA_DIR/docker-compose.dev.yml"
 
 # Image settings
-DOCKER_REGISTRY="${DOCKER_REGISTRY:-docker.io}"
-DOCKER_ORG="${DOCKER_ORG:-umuoy1}"
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
+DOCKER_ORG="${DOCKER_ORG:-streamerhelper}"
 IMAGE_PREFIX="${IMAGE_PREFIX:-streamerhelper}"
 CONTROL_BACKEND_VERSION="${BACKEND_VERSION:-}"
 CONTROL_FRONTEND_VERSION="${FRONTEND_VERSION:-}"
+CONTROL_BROWSER_VERSION="${BROWSER_VERSION:-}"
+CONTROL_DOUYIN_RESOLVER_VERSION="${DOUYIN_RESOLVER_VERSION:-}"
 
 # Color output
 RED='\033[0;31m'
@@ -112,11 +120,68 @@ prepare_container_runtime() {
     esac
 }
 
+is_valid_release_version() {
+    local version="${1:-}"
+    [ -n "$version" ] \
+        && [ "$version" != "latest" ] \
+        && [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]
+}
+
+resolve_pinned_release_version() {
+    if is_valid_release_version "$CONTROL_PINNED_RELEASE_VERSION"; then
+        printf '%s' "$CONTROL_PINNED_RELEASE_VERSION"
+        return 0
+    fi
+    return 1
+}
+
+resolve_default_application_version() {
+    resolve_pinned_release_version
+}
+
+validate_existing_release_pin() {
+    local persisted_version=""
+
+    if [ ! -e "$RELEASE_VERSION_FILE" ]; then
+        CONTROL_PINNED_RELEASE_VERSION=""
+        return 0
+    fi
+
+    if [ ! -r "$RELEASE_VERSION_FILE" ]; then
+        log_error "Application release pin is not readable: $RELEASE_VERSION_FILE"
+        return 1
+    fi
+
+    if ! persisted_version="$(<"$RELEASE_VERSION_FILE")"; then
+        log_error "Application release pin could not be read: $RELEASE_VERSION_FILE"
+        return 1
+    fi
+
+    if [[ "$persisted_version" == *$'\n'* ]] \
+        || ! is_valid_release_version "$persisted_version"; then
+        log_error "Application release pin is invalid: $RELEASE_VERSION_FILE"
+        log_error "Fix or remove the corrupt pin before continuing."
+        return 1
+    fi
+
+    CONTROL_PINNED_RELEASE_VERSION="$persisted_version"
+}
+
+require_pinned_release_version() {
+    validate_existing_release_pin || return 1
+
+    if ! resolve_pinned_release_version >/dev/null; then
+        log_error "No application release is pinned."
+        log_error "Run './bin/control infra up', then './bin/control update app <version>'."
+        return 1
+    fi
+}
+
 resolve_backend_version() {
     if [ -n "${CONTROL_BACKEND_VERSION:-}" ]; then
         printf '%s' "$CONTROL_BACKEND_VERSION"
     else
-        printf 'latest'
+        resolve_default_application_version
     fi
 }
 
@@ -124,36 +189,117 @@ resolve_frontend_version() {
     if [ -n "${CONTROL_FRONTEND_VERSION:-}" ]; then
         printf '%s' "$CONTROL_FRONTEND_VERSION"
     else
-        printf 'latest'
+        resolve_default_application_version
+    fi
+}
+
+resolve_browser_version() {
+    if [ -n "${CONTROL_BROWSER_VERSION:-}" ]; then
+        printf '%s' "$CONTROL_BROWSER_VERSION"
+    else
+        resolve_default_application_version
+    fi
+}
+
+resolve_douyin_resolver_version() {
+    if [ -n "${CONTROL_DOUYIN_RESOLVER_VERSION:-}" ]; then
+        printf '%s' "$CONTROL_DOUYIN_RESOLVER_VERSION"
+    else
+        resolve_default_application_version
     fi
 }
 
 resolve_backend_image() {
+    local version
+    version="$(resolve_backend_version)" || return 1
     printf '%s/%s/%s-backend:%s' \
         "$DOCKER_REGISTRY" \
         "$DOCKER_ORG" \
         "$IMAGE_PREFIX" \
-        "$(resolve_backend_version)"
+        "$version"
 }
 
 resolve_frontend_image() {
+    local version
+    version="$(resolve_frontend_version)" || return 1
     printf '%s/%s/%s-frontend:%s' \
         "$DOCKER_REGISTRY" \
         "$DOCKER_ORG" \
         "$IMAGE_PREFIX" \
-        "$(resolve_frontend_version)"
+        "$version"
+}
+
+resolve_browser_image() {
+    local version
+    version="$(resolve_browser_version)" || return 1
+    printf '%s/%s/%s-browser:%s' \
+        "$DOCKER_REGISTRY" \
+        "$DOCKER_ORG" \
+        "$IMAGE_PREFIX" \
+        "$version"
+}
+
+resolve_douyin_resolver_image() {
+    local version
+    version="$(resolve_douyin_resolver_version)" || return 1
+    printf '%s/%s/%s-douyin-resolver:%s' \
+        "$DOCKER_REGISTRY" \
+        "$DOCKER_ORG" \
+        "$IMAGE_PREFIX" \
+        "$version"
 }
 
 compose_app() {
-    BACKEND_VERSION="$(resolve_backend_version)" \
-    FRONTEND_VERSION="$(resolve_frontend_version)" \
+    local backend_version
+    local frontend_version
+    local browser_version
+    local douyin_resolver_version
+    backend_version="$(resolve_backend_version)" || return 1
+    frontend_version="$(resolve_frontend_version)" || return 1
+    browser_version="$(resolve_browser_version)" || return 1
+    douyin_resolver_version="$(resolve_douyin_resolver_version)" || return 1
+
+    BACKEND_VERSION="$backend_version" \
+    FRONTEND_VERSION="$frontend_version" \
+    BROWSER_VERSION="$browser_version" \
+    DOUYIN_RESOLVER_VERSION="$douyin_resolver_version" \
     docker compose -f "$COMPOSE_APP" --env-file "$ENV_FILE" "$@"
 }
 
 compose_app_dev() {
-    BACKEND_VERSION="$(resolve_backend_version)" \
-    FRONTEND_VERSION="$(resolve_frontend_version)" \
+    BACKEND_VERSION=local \
+    FRONTEND_VERSION=local \
+    BROWSER_VERSION=local \
+    DOUYIN_RESOLVER_VERSION=local \
     docker compose -f "$COMPOSE_APP" -f "$COMPOSE_DEV" --env-file "$ENV_FILE" "$@"
+}
+
+compose_app_down() {
+    # Compose interpolates image references even for `down`. These placeholder
+    # tags make stop-only operations independent of a release pin without
+    # weakening the required-version checks for every other direct Compose use.
+    BACKEND_VERSION=unused-for-down \
+    FRONTEND_VERSION=unused-for-down \
+    BROWSER_VERSION=unused-for-down \
+    DOUYIN_RESOLVER_VERSION=unused-for-down \
+    docker compose -f "$COMPOSE_APP" --env-file "$ENV_FILE" down "$@"
+}
+
+compose_all() {
+    local backend_version
+    local frontend_version
+    local browser_version
+    local douyin_resolver_version
+    backend_version="$(resolve_backend_version)" || return 1
+    frontend_version="$(resolve_frontend_version)" || return 1
+    browser_version="$(resolve_browser_version)" || return 1
+    douyin_resolver_version="$(resolve_douyin_resolver_version)" || return 1
+
+    BACKEND_VERSION="$backend_version" \
+    FRONTEND_VERSION="$frontend_version" \
+    BROWSER_VERSION="$browser_version" \
+    DOUYIN_RESOLVER_VERSION="$douyin_resolver_version" \
+    docker compose -f "$COMPOSE_INFRA" -f "$COMPOSE_APP" --env-file "$ENV_FILE" "$@"
 }
 
 is_local_host() {
@@ -348,10 +494,47 @@ run_with_retries() {
     done
 }
 
+validate_release_version() {
+    local version="${1:-}"
+
+    if [ -z "$version" ] || [ "$version" = "latest" ]; then
+        log_error "An explicit immutable application version is required (for example: v1.2.3)."
+        return 1
+    fi
+
+    if ! is_valid_release_version "$version"; then
+        log_error "Invalid application version tag: $version"
+        return 1
+    fi
+}
+
+persist_release_version() {
+    local version="${1:-}"
+    validate_release_version "$version" || return 1
+
+    mkdir -p "$CONFIG_DIR"
+    local temporary_file
+    temporary_file="$(mktemp "$CONFIG_DIR/.release-version.XXXXXX")"
+    if ! printf '%s\n' "$version" > "$temporary_file" \
+        || ! chmod 600 "$temporary_file" \
+        || ! mv -f "$temporary_file" "$RELEASE_VERSION_FILE"; then
+        rm -f "$temporary_file"
+        log_error "Failed to persist application release version"
+        return 1
+    fi
+
+    CONTROL_PINNED_RELEASE_VERSION="$version"
+}
+
 check_config() {
     if [ ! -f "$CONFIG_FILE" ]; then
         log_error "Configuration not found at $CONFIG_FILE"
         log_error "Run './bin/configure init' first to create configuration."
+        exit 1
+    fi
+
+    if ! bash "$SCRIPT_DIR/upgrade-config" "$CONFIG_FILE"; then
+        log_error "Configuration validation or upgrade failed."
         exit 1
     fi
 }
@@ -381,6 +564,8 @@ generate_env_file() {
     local minio_api_port=$(jq -r ".minio.apiPort // $DEFAULT_MINIO_API_PORT" "$CONFIG_FILE")
     local redis_password=$(jq -r '.redis.password // ""' "$CONFIG_FILE")
     local timezone=$(jq -r '.app.timezone // "Asia/Shanghai"' "$CONFIG_FILE")
+    local pinned_release_version=""
+    pinned_release_version="$(resolve_pinned_release_version || true)"
 
     if [ -z "$app_keys" ] || [ -z "$db_password" ] || [ -z "$s3_secret_key" ]; then
         log_error "Invalid config: missing app.keys, database.password, or s3.secretKey"
@@ -445,6 +630,14 @@ MINIO_CONSOLE_PORT=${minio_console_port}
 MINIO_API_PORT=${minio_api_port}
 CONFIG_DIR=${CONFIG_DIR}
 EOF
+
+    if [ -n "$pinned_release_version" ]; then
+        printf 'BACKEND_VERSION=%s\nFRONTEND_VERSION=%s\nBROWSER_VERSION=%s\nDOUYIN_RESOLVER_VERSION=%s\n' \
+            "$pinned_release_version" \
+            "$pinned_release_version" \
+            "$pinned_release_version" \
+            "$pinned_release_version" >> "$ENV_FILE"
+    fi
 
     chmod 600 "$ENV_FILE"
 }
@@ -530,6 +723,124 @@ wait_for_healthy() {
     return 1
 }
 
+check_optional_application_services() {
+    local degraded=0
+
+    log_step "Checking optional Douyin services..."
+    if ! wait_for_healthy "streamer-browser" 30; then
+        log_warn "Browser is not healthy; Douyin login and browser fallback are unavailable."
+        docker logs streamer-browser --tail 30 || true
+        degraded=1
+    fi
+
+    if ! wait_for_healthy "streamer-douyin-resolver" 30; then
+        log_warn "Douyin resolver is not healthy; Douyin polling will use backend fallbacks."
+        docker logs streamer-douyin-resolver --tail 30 || true
+        degraded=1
+    fi
+
+    if [ "$degraded" -eq 1 ]; then
+        log_warn "Application is running in degraded mode; other platforms remain available."
+    else
+        log_info "Optional Douyin services are healthy."
+    fi
+
+    return 0
+}
+
+restore_application_release() {
+    local version="${1:-}"
+    validate_release_version "$version" || return 1
+    CONTROL_BACKEND_VERSION="$version"
+    CONTROL_FRONTEND_VERSION="$version"
+    CONTROL_BROWSER_VERSION="$version"
+    CONTROL_DOUYIN_RESOLVER_VERSION="$version"
+
+    log_warn "Restoring previous application release: $version"
+    if ! compose_app up -d --force-recreate; then
+        log_error "Failed to recreate the previous application release"
+        return 1
+    fi
+    if ! wait_for_healthy "streamer-backend" 180; then
+        log_error "Previous backend release failed to become healthy"
+        docker logs streamer-backend --tail 30 || true
+        return 1
+    fi
+    if ! wait_for_healthy "streamer-frontend" 180; then
+        log_error "Previous frontend release failed to become healthy"
+        docker logs streamer-frontend --tail 30 || true
+        return 1
+    fi
+    if ! wait_for_healthy "streamer-nginx" 60; then
+        log_error "Previous Nginx release failed to become healthy"
+        docker logs streamer-nginx --tail 30 || true
+        return 1
+    fi
+
+    check_optional_application_services
+    log_info "Previous application release restored."
+}
+
+attempt_application_recovery() {
+    local previous_version="${1:-}"
+
+    if [ -z "$previous_version" ]; then
+        log_warn "No previous pinned release is available for automatic recovery."
+        return 0
+    fi
+
+    if ! restore_application_release "$previous_version"; then
+        log_error "Automatic application recovery failed; manual intervention is required."
+        return 1
+    fi
+}
+
+cleanup_candidate_application() {
+    log_warn "Removing candidate application containers to preserve the stopped state."
+    if ! compose_app down; then
+        log_error "Failed to remove candidate application containers; manual intervention is required."
+        return 1
+    fi
+    log_info "Application services remain stopped."
+}
+
+preserve_application_state_after_failure() {
+    local previous_version="${1:-}"
+    local application_was_running="${2:-0}"
+    local previous_release_still_running="${3:-0}"
+    local candidate_may_exist="${4:-0}"
+
+    if [ "$application_was_running" -eq 1 ]; then
+        if [ "$previous_release_still_running" -eq 1 ]; then
+            log_info "Previous application release remains running."
+            return 0
+        fi
+
+        if [ -n "$previous_version" ]; then
+            attempt_application_recovery "$previous_version"
+            return
+        fi
+
+        log_error "The application was running before the update, but no previous release pin is available for recovery."
+        if [ "$candidate_may_exist" -eq 1 ]; then
+            cleanup_candidate_application || true
+        fi
+        return 1
+    fi
+
+    if [ "$candidate_may_exist" -eq 1 ]; then
+        cleanup_candidate_application
+        return
+    fi
+
+    log_info "Application services remain stopped."
+}
+
+application_services_running() {
+    docker ps --format '{{.Names}}' \
+        | grep -Eq '^streamer-(backend|frontend|browser|douyin-resolver|nginx)$'
+}
+
 # Ensure MinIO bucket exists
 ensure_minio_bucket() {
     local bucket=$(jq -r '.s3.bucket // "streamerhelper-archive"' "$CONFIG_FILE")
@@ -610,27 +921,31 @@ do_migrate() {
         exit 1
     fi
 
-    local use_local_image=false
     local image_to_use
-    image_to_use="$(resolve_backend_image)"
 
     # Check if local image exists
     if [ "${FORCE_REMOTE_BACKEND_IMAGE:-0}" != "1" ] \
         && docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "infra-backend:local"; then
-        use_local_image=true
         image_to_use="infra-backend:local"
         log_info "Using local backend image"
     else
+        if ! image_to_use="$(resolve_backend_image)"; then
+            require_pinned_release_version
+            return 1
+        fi
         log_info "Using remote backend image: $image_to_use"
     fi
 
     log_step "Running migrations..."
-    docker run --rm \
+    if ! docker run --rm \
         --network streamer-network \
         --env-file "$ENV_FILE" \
         --entrypoint "" \
         "$image_to_use" \
-        npm run migration:run:prod
+        npm run migration:run:prod; then
+        log_error "Database migrations failed."
+        return 1
+    fi
 
     log_info "Migrations completed!"
     echo ""
@@ -645,6 +960,7 @@ do_app_up() {
     echo -e "${CYAN}Starting Application Services...${NC}"
     echo ""
 
+    require_pinned_release_version || return 1
     check_dependencies
     check_config
     generate_env_file
@@ -656,7 +972,7 @@ do_app_up() {
         exit 1
     fi
 
-    log_step "Starting backend, frontend, nginx..."
+    log_step "Starting browser, Douyin resolver, backend, frontend, and nginx..."
     compose_app up -d
 
     log_step "Waiting for backend to be healthy..."
@@ -665,6 +981,15 @@ do_app_up() {
         docker logs streamer-backend --tail 30
         exit 1
     fi
+
+    log_step "Waiting for frontend to be healthy..."
+    if ! wait_for_healthy "streamer-frontend" 180; then
+        log_error "Frontend failed to start"
+        docker logs streamer-frontend --tail 30
+        exit 1
+    fi
+
+    check_optional_application_services
 
     log_info "Application services are ready!"
 
@@ -684,7 +1009,7 @@ do_app_down() {
     check_config
     generate_env_file
     log_step "Stopping application services..."
-    compose_app down
+    compose_app_down
     log_info "Application services stopped."
 }
 
@@ -699,6 +1024,7 @@ do_up() {
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
+    require_pinned_release_version || return 1
     do_infra_up
     do_migrate
     do_app_up
@@ -709,7 +1035,7 @@ do_down() {
     check_config
     generate_env_file
     log_step "Stopping all services..."
-    docker compose -f "$COMPOSE_APP" down 2>/dev/null || true
+    compose_app_down 2>/dev/null || true
     docker compose -f "$COMPOSE_INFRA" down 2>/dev/null || true
     log_info "All services stopped."
 }
@@ -777,6 +1103,15 @@ do_dev_up() {
         exit 1
     fi
 
+    log_step "Waiting for frontend to be healthy..."
+    if ! wait_for_healthy "streamer-frontend" 180; then
+        log_error "Frontend failed to start"
+        docker logs streamer-frontend --tail 30
+        exit 1
+    fi
+
+    check_optional_application_services
+
     log_info "Dev environment ready!"
 
     local http_port=$(jq -r ".http.port // $DEFAULT_HTTP_PORT" "$CONFIG_FILE")
@@ -810,22 +1145,34 @@ do_dev_restart() {
 #=============================================================#
 
 do_status() {
+    validate_existing_release_pin || return 1
     check_dependencies
+    local pinned_release_version=""
+    pinned_release_version="$(resolve_pinned_release_version || true)"
     echo ""
     echo -e "${CYAN}StreamerHelper Services Status${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [ -n "$pinned_release_version" ]; then
+        echo "Pinned application release: $pinned_release_version"
+    else
+        echo "Pinned application release: none"
+    fi
     docker ps -a --filter "name=streamer" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     echo ""
 }
 
 do_logs() {
+    validate_existing_release_pin || return 1
     check_dependencies
+    check_config
+    generate_env_file
     local service="${1:-}"
     if [ -n "$service" ]; then
         docker logs -f "streamer-$service"
     else
         # Show logs from all streamer containers
-        docker compose -f "$COMPOSE_INFRA" -f "$COMPOSE_APP" logs -f
+        require_pinned_release_version || return 1
+        compose_all logs -f
     fi
 }
 
@@ -833,18 +1180,75 @@ do_logs() {
 #  Update Commands                                            #
 #=============================================================#
 
+verify_preloaded_application_images() {
+    if [ "$#" -ne 4 ]; then
+        log_error "Internal error: exactly four candidate application images are required."
+        return 1
+    fi
+
+    local image
+    local missing=0
+    for image in "$@"; do
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "Preloaded image found: $image"
+        else
+            log_error "Preloaded image is missing: $image"
+            missing=1
+        fi
+    done
+
+    if [ "$missing" -ne 0 ]; then
+        log_error "Load or pull all four exact candidate image tags before retrying with --preloaded."
+        return 1
+    fi
+}
+
 do_update_app() {
     local version="${1:-}"
+    local application_was_running_override="${2:-}"
+    local previous_release_still_running_override="${3:-}"
+    local use_preloaded_images="${4:-0}"
+    local previous_version=""
+    local application_was_running=0
+    local previous_release_still_running=0
 
-    if [ -n "$version" ]; then
-        CONTROL_BACKEND_VERSION="$version"
-        CONTROL_FRONTEND_VERSION="$version"
-    fi
+    validate_release_version "$version" || return 1
+    case "$application_was_running_override" in
+        ""|0|1) ;;
+        *)
+            log_error "Invalid application running-state override."
+            return 1
+            ;;
+    esac
+    case "$previous_release_still_running_override" in
+        ""|0|1) ;;
+        *)
+            log_error "Invalid previous-release state override."
+            return 1
+            ;;
+    esac
+    case "$use_preloaded_images" in
+        0|1) ;;
+        *)
+            log_error "Invalid preloaded-image mode."
+            return 1
+            ;;
+    esac
+    validate_existing_release_pin || return 1
+    previous_version="$(resolve_pinned_release_version || true)"
+    CONTROL_BACKEND_VERSION="$version"
+    CONTROL_FRONTEND_VERSION="$version"
+    CONTROL_BROWSER_VERSION="$version"
+    CONTROL_DOUYIN_RESOLVER_VERSION="$version"
 
     local backend_image
     local frontend_image
+    local browser_image
+    local douyin_resolver_image
     backend_image="$(resolve_backend_image)"
     frontend_image="$(resolve_frontend_image)"
+    browser_image="$(resolve_browser_image)"
+    douyin_resolver_image="$(resolve_douyin_resolver_image)"
 
     echo ""
     echo -e "${CYAN}Updating Application Images...${NC}"
@@ -853,32 +1257,125 @@ do_update_app() {
     check_dependencies
     check_config
     generate_env_file
+    if [ -n "$application_was_running_override" ]; then
+        application_was_running="$application_was_running_override"
+    elif application_services_running; then
+        application_was_running=1
+    fi
+    if [ -n "$previous_release_still_running_override" ]; then
+        previous_release_still_running="$previous_release_still_running_override"
+    else
+        previous_release_still_running="$application_was_running"
+    fi
 
     log_info "Backend image:  $backend_image"
     log_info "Frontend image: $frontend_image"
+    log_info "Browser image:  $browser_image"
+    log_info "Resolver image: $douyin_resolver_image"
 
-    log_step "Pulling application images..."
-    if ! run_with_retries "Pulling application images" compose_app pull backend frontend nginx browser; then
-        log_error "Application update aborted before stopping services."
-        exit 1
+    if [ "$use_preloaded_images" -eq 1 ]; then
+        log_step "Verifying preloaded candidate application images..."
+        if ! verify_preloaded_application_images \
+            "$backend_image" \
+            "$frontend_image" \
+            "$browser_image" \
+            "$douyin_resolver_image"; then
+            log_error "Application update aborted before recreating application services."
+            preserve_application_state_after_failure \
+                "$previous_version" \
+                "$application_was_running" \
+                "$previous_release_still_running" \
+                0 || true
+            return 1
+        fi
+        log_info "Registry pull skipped because all candidate images are preloaded."
+    else
+        log_step "Pulling application images..."
+        if ! run_with_retries "Pulling application images" compose_app pull backend frontend browser douyin-resolver nginx; then
+            log_error "Application update aborted before recreating application services."
+            preserve_application_state_after_failure \
+                "$previous_version" \
+                "$application_was_running" \
+                "$previous_release_still_running" \
+                0 || true
+            return 1
+        fi
     fi
 
-    log_step "Stopping current application services..."
-    compose_app down
-
-    log_step "Running migrations with updated backend image..."
-    FORCE_REMOTE_BACKEND_IMAGE=1 do_migrate
+    if [ "$previous_release_still_running" -eq 1 ]; then
+        log_step "Running migrations with the updated backend while current services stay online..."
+    else
+        log_step "Running migrations with the updated backend before starting application services..."
+    fi
+    if ! FORCE_REMOTE_BACKEND_IMAGE=1 do_migrate; then
+        log_error "Application update aborted; the release pin is unchanged."
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            "$previous_release_still_running" \
+            0 || true
+        return 1
+    fi
 
     log_step "Starting updated application services..."
-    compose_app up -d --force-recreate
+    if ! compose_app up -d --force-recreate; then
+        log_error "Failed to recreate updated application services."
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            0 \
+            1 || true
+        return 1
+    fi
 
     log_step "Waiting for backend to be healthy..."
     if ! wait_for_healthy "streamer-backend" 180; then
         log_error "Backend failed to start after update"
-        docker logs streamer-backend --tail 30
-        exit 1
+        docker logs streamer-backend --tail 30 || true
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            0 \
+            1 || true
+        return 1
     fi
 
+    log_step "Waiting for frontend to be healthy..."
+    if ! wait_for_healthy "streamer-frontend" 180; then
+        log_error "Frontend failed to start after update"
+        docker logs streamer-frontend --tail 30 || true
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            0 \
+            1 || true
+        return 1
+    fi
+
+    log_step "Waiting for Nginx to be healthy..."
+    if ! wait_for_healthy "streamer-nginx" 60; then
+        log_error "Nginx failed to start after update"
+        docker logs streamer-nginx --tail 30 || true
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            0 \
+            1 || true
+        return 1
+    fi
+
+    check_optional_application_services
+
+    if ! persist_release_version "$version"; then
+        log_error "Updated services are healthy, but the release pin could not be persisted."
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            0 \
+            1 || true
+        return 1
+    fi
+    log_info "Pinned application release: $version"
     log_info "Application update completed!"
     echo ""
 }
@@ -899,7 +1396,10 @@ do_update_infra() {
     fi
 
     log_step "Recreating infrastructure services..."
-    docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" up -d --force-recreate
+    if ! docker compose -f "$COMPOSE_INFRA" --env-file "$ENV_FILE" up -d --force-recreate; then
+        log_error "Failed to recreate infrastructure services."
+        return 1
+    fi
 
     log_step "Waiting for services to be healthy..."
     wait_for_healthy "streamer-postgres" 60 || { log_error "PostgreSQL failed to become healthy after update"; exit 1; }
@@ -915,17 +1415,44 @@ do_update_infra() {
 
 do_update_all() {
     local version="${1:-}"
+    validate_release_version "$version" || return 1
+    validate_existing_release_pin || return 1
+    local previous_version=""
+    local application_was_running=0
+    previous_version="$(resolve_pinned_release_version || true)"
+
     check_dependencies
     check_config
     generate_env_file
 
-    if docker ps --format '{{.Names}}' | grep -Eq '^streamer-(backend|frontend|nginx)$'; then
+    if application_services_running; then
+        application_was_running=1
         log_step "Stopping application services before infrastructure update..."
-        compose_app down
+        if ! compose_app_down; then
+            log_error "Failed to stop the current application cleanly; attempting recovery."
+            preserve_application_state_after_failure \
+                "$previous_version" \
+                "$application_was_running" \
+                0 \
+                0 || true
+            return 1
+        fi
     fi
 
-    do_update_infra
-    do_update_app "$version"
+    if ! (do_update_infra); then
+        log_error "Infrastructure update failed; preserving the previous application state."
+        preserve_application_state_after_failure \
+            "$previous_version" \
+            "$application_was_running" \
+            0 \
+            0 || true
+        return 1
+    fi
+
+    if ! (do_update_app "$version" "$application_was_running" 0 0); then
+        log_error "Application update failed; its recovery path has completed."
+        return 1
+    fi
 }
 
 #=============================================================#
@@ -944,13 +1471,13 @@ print_usage() {
     echo "  migrate        Run database migrations"
     echo ""
     echo -e "${CYAN}Application:${NC}"
-    echo "  app up         Start application services (backend, frontend, nginx)"
+    echo "  app up         Start the pinned application release"
     echo "  app down       Stop application services"
     echo ""
     echo -e "${CYAN}Combined:${NC}"
-    echo "  up             Start everything (infra + migrate + app)"
+    echo "  up             Start everything using the pinned application release"
     echo "  down           Stop all services"
-    echo "  update [t] [v] Update images and recreate services"
+    echo "  update app <v> [--preloaded] | update all <v> | update infra"
     echo "  status         Show service status"
     echo "  logs [service] Show logs (e.g., logs backend)"
     echo ""
@@ -961,17 +1488,17 @@ print_usage() {
     echo "  dev build [s]  Build images (optionally specify service)"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
-    echo "  ./bin/control infra up     # Step 1: Start databases"
-    echo "  ./bin/control migrate      # Step 2: Run migrations"
-    echo "  ./bin/control app up       # Step 3: Start app"
-    echo "  ./bin/control up           # All-in-one"
-    echo "  ./bin/control update app   # Update backend/frontend/nginx"
-    echo "  ./bin/control update all v1.2.3"
+    echo "  ./bin/control update all v1.2.3  # First install of an immutable release"
+    echo "  ./bin/control up           # Restart the currently pinned release"
+    echo "  ./bin/control update app v1.2.3  # Update one immutable application release"
+    echo "  ./bin/control update app v1.2.3 --preloaded  # Use four preloaded candidate images"
     echo "  ./bin/control dev up       # Development mode"
     echo ""
 }
 
 # Main
+main() {
+    local use_preloaded_images=0
 case "${1:-}" in
     infra)
         case "${2:-}" in
@@ -999,16 +1526,40 @@ case "${1:-}" in
     update)
         case "${2:-all}" in
             app)
-                do_update_app "$3"
+                case "${4:-}" in
+                    "")
+                        use_preloaded_images=0
+                        ;;
+                    --preloaded)
+                        use_preloaded_images=1
+                        ;;
+                    *)
+                        log_error "Usage: ./bin/control update app <version> [--preloaded]"
+                        exit 1
+                        ;;
+                esac
+                if [ -n "${5:-}" ]; then
+                    log_error "Usage: ./bin/control update app <version> [--preloaded]"
+                    exit 1
+                fi
+                do_update_app "$3" "" "" "$use_preloaded_images"
                 ;;
             infra)
+                if [ -n "${3:-}" ]; then
+                    log_error "Usage: ./bin/control update infra"
+                    exit 1
+                fi
                 do_update_infra
                 ;;
             all)
+                if [ -n "${4:-}" ]; then
+                    log_error "Usage: ./bin/control update all <version>"
+                    exit 1
+                fi
                 do_update_all "$3"
                 ;;
             *)
-                log_error "Usage: ./bin/control update [app|infra|all] [version]"
+                log_error "Usage: ./bin/control update app <version> [--preloaded] | update infra | update all <version>"
                 exit 1
                 ;;
         esac
@@ -1037,3 +1588,8 @@ case "${1:-}" in
         exit 1
         ;;
 esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

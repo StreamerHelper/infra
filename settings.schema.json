@@ -116,11 +116,13 @@
           "properties": {
             "cookie": {
               "type": "string",
-              "description": "抖音网页版 Cookie。服务器访问抖音触发验证码时，可填入已在浏览器通过验证的 live.douyin.com Cookie。"
+              "deprecated": true,
+              "description": "已弃用且后端不再读取。仅为旧配置文件通过迁移期校验而保留；请删除该字段并使用持久化 Browser Profile 登录。"
             },
             "userAgent": {
               "type": "string",
-              "description": "抖音请求使用的 User-Agent。为空时使用内置桌面 Chrome UA。"
+              "deprecated": true,
+              "description": "高级兼容项（已弃用）：旧版 HTTP 请求使用的 User-Agent。持久化浏览器链路使用浏览器自身 User-Agent。"
             }
           }
         }

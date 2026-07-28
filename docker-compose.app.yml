@@ -1,20 +1,64 @@
-# 应用服务: Backend, Frontend, Nginx
+# 应用服务: Browser, Douyin Resolver, Backend, Frontend, Nginx
 # 使用: ./bin/control app up
 # 前置条件: infra 服务必须已启动
 
 services:
   # Shared browser automation runtime for web login flows.
   browser:
-    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-browser:${BROWSER_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-browser:${BROWSER_VERSION:?BROWSER_VERSION is required}
     container_name: streamer-browser
     restart: unless-stopped
+    init: true
     shm_size: "1gb"
+    stop_grace_period: 30s
+    command:
+      - --user-data-dir=/data/profile
+    volumes:
+      - douyin_browser_profile:/data/profile
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -ec "exec 3<>/dev/tcp/127.0.0.1/9222;
+          printf 'GET /json/version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3;
+          timeout 3 grep -q webSocketDebuggerUrl <&3"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
     networks:
-      - streamer-network
+      - browser-network
+
+  # Anonymous Douyin live-room resolver, isolated from host networking.
+  douyin-resolver:
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-douyin-resolver:${DOUYIN_RESOLVER_VERSION:?DOUYIN_RESOLVER_VERSION is required}
+    container_name: streamer-douyin-resolver
+    restart: unless-stopped
+    environment:
+      DOUYIN_RESOLVER_BIND: 0.0.0.0:7100
+    expose:
+      - "7100"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/douyin-resolver", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    networks:
+      - douyin-resolver-network
 
   # Backend Application
   backend:
-    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-backend:${BACKEND_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-backend:${BACKEND_VERSION:?BACKEND_VERSION is required}
     container_name: streamer-backend
     restart: unless-stopped
     environment:
@@ -45,6 +89,8 @@ services:
       S3_BUCKET: ${S3_BUCKET:-streamerhelper-archive}
       # Browser automation
       DOUYIN_BROWSER_ENDPOINT: ${DOUYIN_BROWSER_ENDPOINT:-http://browser:9222}
+      # Anonymous Douyin live-room resolver
+      DOUYIN_RESOLVER_URL: ${DOUYIN_RESOLVER_URL:-http://douyin-resolver:7100}
     volumes:
       - ${CONFIG_DIR:-~/.streamer-helper}/settings.json:/app/config/settings.json
       - ${CONFIG_DIR:-~/.streamer-helper}/Logs/backend:/app/logs
@@ -55,14 +101,14 @@ services:
       timeout: 10s
       start_period: 60s
       retries: 5
-    depends_on:
-      - browser
     networks:
       - streamer-network
+      - browser-network
+      - douyin-resolver-network
 
   # Frontend Application
   frontend:
-    image: ${DOCKER_REGISTRY:-docker.io}/${DOCKER_ORG:-umuoy1}/${IMAGE_PREFIX:-streamerhelper}-frontend:${FRONTEND_VERSION:-latest}
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_ORG:-streamerhelper}/${IMAGE_PREFIX:-streamerhelper}-frontend:${FRONTEND_VERSION:?FRONTEND_VERSION is required}
     container_name: streamer-frontend
     restart: unless-stopped
     environment:
@@ -81,7 +127,7 @@ services:
 
   # Nginx Reverse Proxy
   nginx:
-    image: nginx:alpine
+    image: nginx:1.30.4-alpine3.24@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
     container_name: streamer-nginx
     restart: unless-stopped
     ports:
@@ -90,6 +136,12 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ${CONFIG_DIR:-~/.streamer-helper}/Logs/nginx:/var/log/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -T 3 -O /dev/null http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
     depends_on:
       - frontend
       - backend
@@ -99,6 +151,11 @@ services:
 networks:
   streamer-network:
     external: true
+  browser-network:
+    driver: bridge
+  douyin-resolver-network:
+    driver: bridge
 
 volumes:
   backend_temp:
+  douyin_browser_profile:

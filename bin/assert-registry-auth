@@ -1,0 +1,96 @@
+#!/bin/bash
+
+set -u
+
+registry="${1:-}"
+if [ -z "$registry" ]; then
+    echo "Usage: assert-registry-auth <registry-host>" >&2
+    exit 2
+fi
+
+registry_host="${registry#http://}"
+registry_host="${registry_host#https://}"
+registry_host="${registry_host%%/*}"
+if [ -z "$registry_host" ]; then
+    echo "Invalid registry host: $registry" >&2
+    exit 2
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required to inspect Docker registry credentials." >&2
+    exit 2
+fi
+
+docker_config_dir="${DOCKER_CONFIG:-$HOME/.docker}"
+docker_config_file="$docker_config_dir/config.json"
+if [ ! -r "$docker_config_file" ]; then
+    echo "No Docker credential is configured for $registry_host." >&2
+    echo "Run 'docker login $registry_host' before publishing." >&2
+    exit 1
+fi
+
+if jq -e --arg registry "$registry_host" '
+    def canonical_registry:
+        sub("^https?://"; "")
+        | sub("/v1/?$"; "")
+        | sub("/+$"; "")
+        | if . == "index.docker.io" then "docker.io" else . end;
+    [
+        (.auths // {} | to_entries[])
+        | select((.key | canonical_registry) == ($registry | canonical_registry))
+        | select(
+            ((.value.auth // "") | length) > 0
+            or ((.value.identitytoken // "") | length) > 0
+        )
+    ] | length > 0
+' "$docker_config_file" >/dev/null 2>&1; then
+    exit 0
+fi
+
+credential_helper="$(
+    jq -r --arg registry "$registry_host" '
+        def canonical_registry:
+            sub("^https?://"; "")
+            | sub("/v1/?$"; "")
+            | sub("/+$"; "")
+            | if . == "index.docker.io" then "docker.io" else . end;
+        (
+            [
+                (.credHelpers // {} | to_entries[])
+                | select((.key | canonical_registry) == ($registry | canonical_registry))
+                | .value
+            ][0]
+        ) // (.credsStore // empty)
+    ' "$docker_config_file" 2>/dev/null
+)"
+
+if [ -n "$credential_helper" ]; then
+    credential_helper_command="docker-credential-$credential_helper"
+    if command -v "$credential_helper_command" >/dev/null 2>&1; then
+        credential_servers=(
+            "$registry_host"
+            "https://$registry_host"
+            "https://$registry_host/v1/"
+        )
+        if [ "$registry_host" = "docker.io" ]; then
+            credential_servers+=("https://index.docker.io/v1/")
+        fi
+
+        for credential_server in "${credential_servers[@]}"; do
+            credential="$(
+                printf '%s\n' "$credential_server" \
+                    | "$credential_helper_command" get 2>/dev/null
+            )" || continue
+            if printf '%s' "$credential" | jq -e '
+                ((.Username // "") | length) > 0
+                and ((.Secret // "") | length) > 0
+            ' >/dev/null 2>&1; then
+                exit 0
+            fi
+        done
+    fi
+fi
+
+echo "No Docker credential is configured for $registry_host." >&2
+echo "Run 'docker login $registry_host' before publishing." >&2
+exit 1

@@ -9,6 +9,12 @@ services:
       context: .
       dockerfile: Dockerfile.browser
 
+  douyin-resolver:
+    image: infra-douyin-resolver:local
+    build:
+      context: ./douyin-resolver
+      dockerfile: Dockerfile
+
   backend:
     image: infra-backend:local
     build:

@@ -7,13 +7,23 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v1.0.0)'
-        required: false
-        default: 'latest'
+        description: 'New immutable image tag (e.g., v1.0.0)'
+        required: true
+      backend_ref:
+        description: 'Exact web-server tag or commit to build'
+        required: true
+      frontend_ref:
+        description: 'Exact web tag or commit to build'
+        required: true
 
 env:
-  DOCKER_REGISTRY: docker.io
+  DOCKER_REGISTRY: ghcr.io
   DOCKER_ORG: streamerhelper
+  IMAGE_PREFIX: streamerhelper
+
+concurrency:
+  group: docker-release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -28,19 +38,71 @@ jobs:
         with:
           path: infra
 
+      - name: Determine immutable release inputs
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.version }}
+          REQUESTED_BACKEND_REF: ${{ github.event.inputs.backend_ref }}
+          REQUESTED_FRONTEND_REF: ${{ github.event.inputs.frontend_ref }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="$REQUESTED_VERSION"
+            BACKEND_REF="$REQUESTED_BACKEND_REF"
+            FRONTEND_REF="$REQUESTED_FRONTEND_REF"
+          else
+            VERSION="$GITHUB_REF_NAME"
+            BACKEND_REF="$GITHUB_REF_NAME"
+            FRONTEND_REF="$GITHUB_REF_NAME"
+          fi
+
+          if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ] \
+            || [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::A new explicit image version is required; 'latest' is not publishable."
+            exit 1
+          fi
+          for ref in "$BACKEND_REF" "$FRONTEND_REF"; do
+            if [ -z "$ref" ] || [[ ! "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$ ]]; then
+              echo "::error::Backend and frontend refs must be explicit tags or commits."
+              exit 1
+            fi
+          done
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "backend_ref=$BACKEND_REF" >> "$GITHUB_OUTPUT"
+          echo "frontend_ref=$FRONTEND_REF" >> "$GITHUB_OUTPUT"
+          echo "Building immutable release $VERSION"
+
       - name: Checkout backend repository
         uses: actions/checkout@v4
         with:
-          repository: StreamerHelper/backend
+          repository: StreamerHelper/web-server
           path: backend
+          ref: ${{ steps.release.outputs.backend_ref }}
           token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Checkout frontend repository
         uses: actions/checkout@v4
         with:
-          repository: StreamerHelper/frontend
+          repository: StreamerHelper/web
           path: frontend
+          ref: ${{ steps.release.outputs.frontend_ref }}
           token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Capture source revisions
+        id: sources
+        run: |
+          echo "infra_sha=$(git -C infra rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "backend_sha=$(git -C backend rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "frontend_sha=$(git -C frontend rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Test release control invariants
+        run: |
+          bash -n infra/bin/control infra/bin/assert-registry-auth infra/bin/assert-image-tag-unused infra/bin/upgrade-config infra/build-and-push.sh infra/test/*.sh
+          bash infra/test/control-release-pin.test.sh
+          bash infra/test/compose-release-version.test.sh
+          bash infra/test/immutable-tag-probe.test.sh
+          bash infra/test/publish-preflight.test.sh
+          bash infra/test/config-upgrade.test.sh
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -48,24 +110,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine version
-        id: version
+      - name: Refuse an existing release tag
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          elif [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION="${{ github.ref_name }}"
-          else
-            VERSION="latest"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
+          for component in backend frontend browser douyin-resolver; do
+            image="${DOCKER_REGISTRY}/${DOCKER_ORG}/${IMAGE_PREFIX}-${component}:${VERSION}"
+            if ! bash infra/bin/assert-image-tag-unused "$image"; then
+              echo "::error::Immutable tag check failed for $image"
+              exit 1
+            fi
+          done
 
       - name: Build and push backend
         uses: docker/build-push-action@v5
@@ -75,10 +137,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/backend:${{ steps.version.outputs.version }}
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/backend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/${{ env.IMAGE_PREFIX }}-backend:${{ steps.release.outputs.version }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
       - name: Build and push frontend
         uses: docker/build-push-action@v5
@@ -88,23 +149,33 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/frontend:${{ steps.version.outputs.version }}
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/frontend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/${{ env.IMAGE_PREFIX }}-frontend:${{ steps.release.outputs.version }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
-      - name: Build and push nginx
+      - name: Build and push browser
         uses: docker/build-push-action@v5
         with:
           context: ./infra
-          file: ./infra/Dockerfile.nginx
+          file: ./infra/Dockerfile.browser
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/nginx:${{ steps.version.outputs.version }}
-            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/nginx:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/${{ env.IMAGE_PREFIX }}-browser:${{ steps.release.outputs.version }}
+          cache-from: type=gha,scope=browser
+          cache-to: type=gha,mode=max,scope=browser
+
+      - name: Build and push Douyin resolver
+        uses: docker/build-push-action@v5
+        with:
+          context: ./infra/douyin-resolver
+          file: ./infra/douyin-resolver/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_ORG }}/${{ env.IMAGE_PREFIX }}-douyin-resolver:${{ steps.release.outputs.version }}
+          cache-from: type=gha,scope=douyin-resolver
+          cache-to: type=gha,mode=max,scope=douyin-resolver
 
       - name: Summary
         run: |
@@ -112,6 +183,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| backend | \`${{ steps.version.outputs.version }}\`, \`latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| frontend | \`${{ steps.version.outputs.version }}\`, \`latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| nginx | \`${{ steps.version.outputs.version }}\`, \`latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.IMAGE_PREFIX }}-backend | \`${{ steps.release.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.IMAGE_PREFIX }}-frontend | \`${{ steps.release.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.IMAGE_PREFIX }}-browser | \`${{ steps.release.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.IMAGE_PREFIX }}-douyin-resolver | \`${{ steps.release.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Sources: infra \`${{ steps.sources.outputs.infra_sha }}\`, backend \`${{ steps.sources.outputs.backend_sha }}\`, frontend \`${{ steps.sources.outputs.frontend_sha }}\`." >> $GITHUB_STEP_SUMMARY

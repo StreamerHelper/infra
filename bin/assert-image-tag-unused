@@ -1,0 +1,34 @@
+#!/bin/bash
+
+set -u
+
+image="${1:-}"
+if [ -z "$image" ]; then
+    echo "Usage: assert-image-tag-unused <registry/image:tag>" >&2
+    exit 2
+fi
+registry="${image%%/*}"
+
+probe_output="$(mktemp)"
+trap 'rm -f "$probe_output"' EXIT
+
+if docker buildx imagetools inspect "$image" >"$probe_output" 2>&1; then
+    echo "Refusing to overwrite existing immutable image: $image" >&2
+    exit 1
+fi
+
+if grep -Eiq 'manifest[ _]unknown|no such manifest' "$probe_output" \
+    || grep -Eq '^ERROR: .+: not found$' "$probe_output"; then
+    echo "Immutable image tag is available: $image"
+    exit 0
+fi
+
+echo "Unable to prove that immutable image tag is unused: $image" >&2
+if grep -Eiq \
+    'authentication required|failed to authorize|insufficient[_ ]scope|unauthorized|access denied|requested access.*denied|forbidden' \
+    "$probe_output"; then
+    echo "Registry authentication failed while probing the immutable tag." >&2
+    echo "Run 'docker login $registry' and retry." >&2
+fi
+sed -n '1,20p' "$probe_output" >&2
+exit 2

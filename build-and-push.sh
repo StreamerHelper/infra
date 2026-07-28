@@ -7,16 +7,16 @@
 #  Examples:                                                  #
 #    ./build-and-push.sh v0.0.2                               #
 #    ./build-and-push.sh v0.0.2 --no-cache                    #
-#    ./build-and-push.sh --skip-push                          #
+#    ./build-and-push.sh v0.0.2 --skip-push                   #
 #=============================================================#
 
 set -e
 
 # Configuration
-REGISTRY=${DOCKER_REGISTRY:-docker.io}
-ORG=${DOCKER_ORG:-umuoy1}
+REGISTRY=${DOCKER_REGISTRY:-ghcr.io}
+ORG=${DOCKER_ORG:-streamerhelper}
 IMAGE_PREFIX=${IMAGE_PREFIX:-streamerhelper}
-VERSION="latest"
+VERSION=""
 NO_CACHE=""
 SKIP_PUSH=""
 
@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: ./build-and-push.sh [version] [options]"
             echo ""
             echo "Arguments:"
-            echo "  version    Image tag (default: latest)"
+            echo "  version    New immutable image tag (required; 'latest' is rejected)"
             echo ""
             echo "Options:"
             echo "  --no-cache      Build without cache"
@@ -47,14 +47,14 @@ while [[ $# -gt 0 ]]; do
             echo "  -h, --help      Show this help"
             echo ""
             echo "Environment variables:"
-            echo "  DOCKER_REGISTRY   Docker registry (default: docker.io)"
-            echo "  DOCKER_ORG        Docker org/username (default: umuoy1)"
+            echo "  DOCKER_REGISTRY   Docker registry (default: ghcr.io)"
+            echo "  DOCKER_ORG        Docker org/namespace (default: streamerhelper)"
             echo "  IMAGE_PREFIX      Image name prefix (default: streamerhelper)"
             echo ""
             echo "Examples:"
             echo "  ./build-and-push.sh v1.0.0"
             echo "  ./build-and-push.sh v1.0.0 --no-cache"
-            echo "  ./build-and-push.sh --skip-push"
+            echo "  ./build-and-push.sh v1.0.0 --skip-push"
             exit 0
             ;;
         -*)
@@ -68,6 +68,16 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+    echo "An explicit immutable image tag is required; 'latest' is not publishable."
+    exit 1
+fi
+
+if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+    echo "Invalid image tag: $VERSION"
+    exit 1
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -84,6 +94,9 @@ log_build() { echo -e "${BLUE}[BUILD]${NC} $1"; }
 # Check directories - use actual project structure
 BACKEND_DIR="$ROOT_DIR/web-server"
 FRONTEND_DIR="$ROOT_DIR/web"
+DOUYIN_RESOLVER_DIR="$SCRIPT_DIR/douyin-resolver"
+TAG_PROBE="$SCRIPT_DIR/bin/assert-image-tag-unused"
+REGISTRY_AUTH_CHECK="$SCRIPT_DIR/bin/assert-registry-auth"
 
 if [ ! -d "$BACKEND_DIR" ]; then
     log_error "Backend directory not found: $BACKEND_DIR"
@@ -94,6 +107,11 @@ fi
 if [ ! -d "$FRONTEND_DIR" ]; then
     log_error "Frontend directory not found: $FRONTEND_DIR"
     log_error "Expected structure: infra/ (this script), web-server/ (backend), web/ (frontend)"
+    exit 1
+fi
+
+if [ ! -f "$DOUYIN_RESOLVER_DIR/Dockerfile" ]; then
+    log_error "Douyin resolver Dockerfile not found: $DOUYIN_RESOLVER_DIR/Dockerfile"
     exit 1
 fi
 
@@ -115,12 +133,26 @@ fi
 
 # Check docker login (skip if --skip-push)
 if [ -z "${SKIP_PUSH:-}" ]; then
-    log_info "Checking Docker login status..."
-    if ! docker pull busybox:latest >/dev/null 2>&1; then
-        log_warn "Not logged in to Docker registry"
-        log_info "Running docker login..."
-        docker login $REGISTRY
+    if ! docker buildx version >/dev/null 2>&1; then
+        log_error "Docker Buildx is required for multi-architecture publishing"
+        exit 1
     fi
+
+    log_info "Checking registry credentials..."
+    if ! bash "$REGISTRY_AUTH_CHECK" "$REGISTRY"; then
+        log_error "Registry authentication preflight failed."
+        exit 1
+    fi
+
+    log_info "Checking immutable release tags..."
+    for component in backend frontend browser douyin-resolver; do
+        image="$REGISTRY/$ORG/$IMAGE_PREFIX-$component:$VERSION"
+        if ! bash "$TAG_PROBE" "$image"; then
+            log_error "Immutable tag check failed."
+            log_error "Check registry connectivity and permissions; run 'docker login $REGISTRY' if authentication expired."
+            exit 1
+        fi
+    done
 fi
 
 # Banner
@@ -143,15 +175,20 @@ build_and_push() {
     local image_name="$IMAGE_PREFIX-$name"
 
     log_build "Building $image_name..."
-    docker build $NO_CACHE -f "$dockerfile" -t "$REGISTRY/$ORG/$image_name:$VERSION" "$context"
-    docker tag "$REGISTRY/$ORG/$image_name:$VERSION" "$REGISTRY/$ORG/$image_name:latest"
-
     if [ -z "${SKIP_PUSH:-}" ]; then
-        log_info "Pushing $image_name:$VERSION..."
-        docker push "$REGISTRY/$ORG/$image_name:$VERSION"
-        docker push "$REGISTRY/$ORG/$image_name:latest"
+        log_info "Building and pushing linux/amd64 + linux/arm64 image..."
+        docker buildx build $NO_CACHE \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -f "$dockerfile" \
+            -t "$REGISTRY/$ORG/$image_name:$VERSION" \
+            "$context"
     else
-        log_info "Skipping push (--skip-push)"
+        docker build $NO_CACHE \
+            -f "$dockerfile" \
+            -t "$REGISTRY/$ORG/$image_name:$VERSION" \
+            "$context"
+        log_info "Built the local host architecture; skipping registry push"
     fi
 
     echo ""
@@ -162,6 +199,7 @@ build_and_push() {
 build_and_push "backend" "$SCRIPT_DIR/Dockerfile.backend" "$BACKEND_DIR"
 build_and_push "frontend" "$SCRIPT_DIR/Dockerfile.frontend" "$FRONTEND_DIR"
 build_and_push "browser" "$SCRIPT_DIR/Dockerfile.browser" "$SCRIPT_DIR"
+build_and_push "douyin-resolver" "$DOUYIN_RESOLVER_DIR/Dockerfile" "$DOUYIN_RESOLVER_DIR"
 
 # Done
 echo "╔═══════════════════════════════════════════════════════════╗"
@@ -171,6 +209,7 @@ echo "║  Images built:                                            ║"
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-backend:$VERSION         "
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-frontend:$VERSION        "
 echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-browser:$VERSION         "
+echo "║    - $REGISTRY/$ORG/$IMAGE_PREFIX-douyin-resolver:$VERSION "
 if [ -z "${SKIP_PUSH:-}" ]; then
 echo "║                                                           ║"
 echo "║  Images pushed to registry                                ║"
