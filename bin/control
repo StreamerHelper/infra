@@ -13,6 +13,8 @@ CONFIG_DIR="${STREAMER_HELPER_CONFIG_DIR:-$HOME/.streamer-helper}"
 CONFIG_FILE="$CONFIG_DIR/settings.json"
 ENV_FILE="$CONFIG_DIR/.docker-env"
 RELEASE_VERSION_FILE="$CONFIG_DIR/release-version"
+SERVICE_VERSIONS_FILE="$CONFIG_DIR/service-versions.json"
+SERVICE_VERSIONS_PREVIOUS_FILE="$CONFIG_DIR/service-versions.previous.json"
 
 CONTROL_PINNED_RELEASE_VERSION=""
 if [ -r "$RELEASE_VERSION_FILE" ]; then
@@ -139,6 +141,85 @@ resolve_default_application_version() {
     resolve_pinned_release_version
 }
 
+# Per-service version pins live in service-versions.json. They take precedence
+# over the legacy single release-version pin so a backend-only release never
+# drags the frontend/browser/resolver back to an older tag.
+resolve_service_version() {
+    local service="${1:-}"
+    [ -n "$service" ] || return 1
+    [ -r "$SERVICE_VERSIONS_FILE" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    local version
+    version="$(jq -r --arg service "$service" '.[$service] // empty' "$SERVICE_VERSIONS_FILE" 2>/dev/null)" || return 1
+    is_valid_release_version "$version" || return 1
+    printf '%s' "$version"
+}
+
+# Atomically write one service version (or all four with "all").
+write_service_versions() {
+    local service="${1:-}"
+    local version="${2:-}"
+    local services=(backend frontend browser douyin-resolver)
+
+    is_valid_release_version "$version" || return 1
+    if [ "$service" != "all" ]; then
+        local known=0
+        local candidate
+        for candidate in "${services[@]}"; do
+            if [ "$candidate" = "$service" ]; then known=1; fi
+        done
+        if [ "$known" -ne 1 ]; then
+            log_error "Unknown application service: $service"
+            return 1
+        fi
+    fi
+
+    mkdir -p "$CONFIG_DIR" || return 1
+    local temporary_file
+    temporary_file="$(mktemp "$CONFIG_DIR/.service-versions.XXXXXX")" || return 1
+
+    local write_ok=1
+    if [ "$service" = "all" ]; then
+        jq -n --arg version "$version" \
+            '{backend: $version, frontend: $version, browser: $version, "douyin-resolver": $version}' \
+            > "$temporary_file" || write_ok=0
+    elif [ -s "$SERVICE_VERSIONS_FILE" ]; then
+        jq --arg service "$service" --arg version "$version" \
+            '.[$service] = $version' "$SERVICE_VERSIONS_FILE" \
+            > "$temporary_file" || write_ok=0
+    else
+        jq -n --arg service "$service" --arg version "$version" \
+            '{($service): $version}' > "$temporary_file" || write_ok=0
+    fi
+
+    if [ "$write_ok" -ne 1 ] || ! chmod 600 "$temporary_file"; then
+        rm -f "$temporary_file"
+        log_error "Failed to write service version manifest"
+        return 1
+    fi
+
+    if [ -f "$SERVICE_VERSIONS_FILE" ]; then
+        cp -p "$SERVICE_VERSIONS_FILE" "$SERVICE_VERSIONS_PREVIOUS_FILE" 2>/dev/null || true
+    fi
+
+    if ! mv -f "$temporary_file" "$SERVICE_VERSIONS_FILE"; then
+        rm -f "$temporary_file"
+        log_error "Failed to persist service version manifest"
+        return 1
+    fi
+}
+
+service_container_name() {
+    case "${1:-}" in
+        backend) printf 'streamer-backend' ;;
+        frontend) printf 'streamer-frontend' ;;
+        browser) printf 'streamer-browser' ;;
+        douyin-resolver) printf 'streamer-douyin-resolver' ;;
+        *) return 1 ;;
+    esac
+}
+
 validate_existing_release_pin() {
     local persisted_version=""
 
@@ -170,16 +251,26 @@ validate_existing_release_pin() {
 require_pinned_release_version() {
     validate_existing_release_pin || return 1
 
-    if ! resolve_pinned_release_version >/dev/null; then
-        log_error "No application release is pinned."
-        log_error "Run './bin/control infra up', then './bin/control update app <version>'."
-        return 1
+    if resolve_pinned_release_version >/dev/null; then
+        return 0
     fi
+
+    if [ -r "$SERVICE_VERSIONS_FILE" ] && command -v jq >/dev/null 2>&1; then
+        if [ -n "$(jq -r 'to_entries[] | select(.value != null and .value != "") | .value' "$SERVICE_VERSIONS_FILE" 2>/dev/null | head -n 1)" ]; then
+            return 0
+        fi
+    fi
+
+    log_error "No application release is pinned."
+    log_error "Run './bin/control infra up', then './bin/control update app <version>'."
+    return 1
 }
 
 resolve_backend_version() {
     if [ -n "${CONTROL_BACKEND_VERSION:-}" ]; then
         printf '%s' "$CONTROL_BACKEND_VERSION"
+    elif resolve_service_version backend; then
+        :
     else
         resolve_default_application_version
     fi
@@ -188,6 +279,8 @@ resolve_backend_version() {
 resolve_frontend_version() {
     if [ -n "${CONTROL_FRONTEND_VERSION:-}" ]; then
         printf '%s' "$CONTROL_FRONTEND_VERSION"
+    elif resolve_service_version frontend; then
+        :
     else
         resolve_default_application_version
     fi
@@ -196,6 +289,8 @@ resolve_frontend_version() {
 resolve_browser_version() {
     if [ -n "${CONTROL_BROWSER_VERSION:-}" ]; then
         printf '%s' "$CONTROL_BROWSER_VERSION"
+    elif resolve_service_version browser; then
+        :
     else
         resolve_default_application_version
     fi
@@ -204,6 +299,8 @@ resolve_browser_version() {
 resolve_douyin_resolver_version() {
     if [ -n "${CONTROL_DOUYIN_RESOLVER_VERSION:-}" ]; then
         printf '%s' "$CONTROL_DOUYIN_RESOLVER_VERSION"
+    elif resolve_service_version douyin-resolver; then
+        :
     else
         resolve_default_application_version
     fi
@@ -564,8 +661,11 @@ generate_env_file() {
     local minio_api_port=$(jq -r ".minio.apiPort // $DEFAULT_MINIO_API_PORT" "$CONFIG_FILE")
     local redis_password=$(jq -r '.redis.password // ""' "$CONFIG_FILE")
     local timezone=$(jq -r '.app.timezone // "Asia/Shanghai"' "$CONFIG_FILE")
-    local pinned_release_version=""
-    pinned_release_version="$(resolve_pinned_release_version || true)"
+    local backend_version frontend_version browser_version douyin_resolver_version
+    backend_version="$(resolve_backend_version)" || return 1
+    frontend_version="$(resolve_frontend_version)" || return 1
+    browser_version="$(resolve_browser_version)" || return 1
+    douyin_resolver_version="$(resolve_douyin_resolver_version)" || return 1
 
     if [ -z "$app_keys" ] || [ -z "$db_password" ] || [ -z "$s3_secret_key" ]; then
         log_error "Invalid config: missing app.keys, database.password, or s3.secretKey"
@@ -631,13 +731,11 @@ MINIO_API_PORT=${minio_api_port}
 CONFIG_DIR=${CONFIG_DIR}
 EOF
 
-    if [ -n "$pinned_release_version" ]; then
-        printf 'BACKEND_VERSION=%s\nFRONTEND_VERSION=%s\nBROWSER_VERSION=%s\nDOUYIN_RESOLVER_VERSION=%s\n' \
-            "$pinned_release_version" \
-            "$pinned_release_version" \
-            "$pinned_release_version" \
-            "$pinned_release_version" >> "$ENV_FILE"
-    fi
+    printf 'BACKEND_VERSION=%s\nFRONTEND_VERSION=%s\nBROWSER_VERSION=%s\nDOUYIN_RESOLVER_VERSION=%s\n' \
+        "$backend_version" \
+        "$frontend_version" \
+        "$browser_version" \
+        "$douyin_resolver_version" >> "$ENV_FILE"
 
     chmod 600 "$ENV_FILE"
 }
@@ -1002,6 +1100,125 @@ do_app_up() {
     echo -e "${GREEN}║${NC}  MinIO Console: http://localhost:${minio_port}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
+}
+
+#=============================================================#
+#  Single-service release                                     #
+#=============================================================#
+
+# Release one application service without touching the others.
+# Usage: app release <service> <version> [--no-pull]
+do_app_release() {
+    local service="${1:-}"
+    local version="${2:-}"
+    local pull_missing="${3:-1}"
+
+    case "$service" in
+        backend|frontend|browser|douyin-resolver|all) ;;
+        *)
+            log_error "Usage: ./bin/control app release <backend|frontend|browser|douyin-resolver|all> <version> [--no-pull]"
+            return 1
+            ;;
+    esac
+    validate_release_version "$version" || return 1
+
+    check_dependencies
+    check_config
+
+    local previous_version=""
+    if [ "$service" = "all" ]; then
+        previous_version="$(resolve_pinned_release_version || true)"
+    else
+        previous_version="$(resolve_service_version "$service" || true)"
+    fi
+
+    if [ "$service" != "all" ]; then
+        local image="$DOCKER_REGISTRY/$DOCKER_ORG/$IMAGE_PREFIX-$service:$version"
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+            if [ "$pull_missing" = "0" ]; then
+                log_error "Image not found locally: $image"
+                return 1
+            fi
+            log_step "Pulling $image ..."
+            if ! docker pull "$image"; then
+                log_error "Failed to pull $image"
+                return 1
+            fi
+        fi
+    fi
+
+    if ! write_service_versions "$service" "$version"; then
+        log_error "Failed to pin $service to $version"
+        return 1
+    fi
+
+    generate_env_file
+
+    log_step "Recreating ${service} service(s)..."
+    if [ "$service" = "all" ]; then
+        if ! compose_app up -d; then
+            log_error "Failed to start application services"
+            return 1
+        fi
+        local container
+        for container in streamer-backend streamer-frontend; do
+            if ! wait_for_healthy "$container" 180; then
+                log_error "$container did not become healthy"
+                docker logs "$container" --tail 30 || true
+                return 1
+            fi
+        done
+    else
+        if ! compose_app up -d --no-deps "$service"; then
+            log_error "Failed to recreate $service"
+            return 1
+        fi
+        local container
+        container="$(service_container_name "$service")" || return 1
+        if ! wait_for_healthy "$container" 180; then
+            log_error "$container did not become healthy after release"
+            if [ -n "$previous_version" ] && [ "$previous_version" != "$version" ]; then
+                log_warn "Rolling $service back to $previous_version"
+                if write_service_versions "$service" "$previous_version"; then
+                    generate_env_file
+                    compose_app up -d --no-deps "$service" || true
+                fi
+            fi
+            docker logs "$container" --tail 30 || true
+            return 1
+        fi
+    fi
+
+    log_info "Released $service -> $version"
+    if [ -n "$previous_version" ] && [ "$previous_version" != "$version" ]; then
+        log_info "Rollback: ./bin/control app release $service $previous_version"
+    fi
+}
+
+# Restore the version recorded before the last release of one service.
+do_app_rollback() {
+    local service="${1:-}"
+    case "$service" in
+        backend|frontend|browser|douyin-resolver) ;;
+        *)
+            log_error "Usage: ./bin/control app rollback <backend|frontend|browser|douyin-resolver>"
+            return 1
+            ;;
+    esac
+
+    if [ ! -r "$SERVICE_VERSIONS_PREVIOUS_FILE" ]; then
+        log_error "No previous service versions recorded at $SERVICE_VERSIONS_PREVIOUS_FILE"
+        return 1
+    fi
+
+    local version
+    version="$(jq -r --arg service "$service" '.[$service] // empty' "$SERVICE_VERSIONS_PREVIOUS_FILE")"
+    if ! is_valid_release_version "$version"; then
+        log_error "No previous version recorded for $service"
+        return 1
+    fi
+
+    do_app_release "$service" "$version" 0
 }
 
 do_app_down() {
@@ -1375,6 +1592,9 @@ do_update_app() {
             1 || true
         return 1
     fi
+    if ! write_service_versions all "$version"; then
+        log_warn "Updated services are healthy, but per-service version pins could not be persisted."
+    fi
     log_info "Pinned application release: $version"
     log_info "Application update completed!"
     echo ""
@@ -1473,6 +1693,8 @@ print_usage() {
     echo -e "${CYAN}Application:${NC}"
     echo "  app up         Start the pinned application release"
     echo "  app down       Stop application services"
+    echo "  app release <service> <version>  Release one service (no-op for others)"
+    echo "  app rollback <service>           Restore the previous version of one service"
     echo ""
     echo -e "${CYAN}Combined:${NC}"
     echo "  up             Start everything using the pinned application release"
@@ -1492,6 +1714,8 @@ print_usage() {
     echo "  ./bin/control up           # Restart the currently pinned release"
     echo "  ./bin/control update app v1.2.3  # Update one immutable application release"
     echo "  ./bin/control update app v1.2.3 --preloaded  # Use four preloaded candidate images"
+    echo "  ./bin/control app release backend v1.2.3  # Backend-only release"
+    echo "  ./bin/control app rollback backend        # Undo the last backend release"
     echo "  ./bin/control dev up       # Development mode"
     echo ""
 }
@@ -1514,7 +1738,18 @@ case "${1:-}" in
         case "${2:-}" in
             up) do_app_up ;;
             down) do_app_down ;;
-            *) log_error "Usage: ./bin/control app [up|down]"; exit 1 ;;
+            release)
+                local pull_missing=1
+                if [ "${5:-}" = "--no-pull" ]; then
+                    pull_missing=0
+                elif [ -n "${5:-}" ]; then
+                    log_error "Usage: ./bin/control app release <service> <version> [--no-pull]"
+                    exit 1
+                fi
+                do_app_release "${3:-}" "${4:-}" "$pull_missing"
+                ;;
+            rollback) do_app_rollback "${3:-}" ;;
+            *) log_error "Usage: ./bin/control app [up|down|release|rollback]"; exit 1 ;;
         esac
         ;;
     up)

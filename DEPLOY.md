@@ -221,7 +221,40 @@ streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
 
 ## 版本更新
 
-### 方法一：使用 `update` 命令 (推荐)
+### 单服务发布 (只改一个组件时推荐)
+
+四个应用镜像的版本分别记录在 `~/.streamer-helper/service-versions.json`：
+
+```json
+{
+  "backend": "v20261115010500",
+  "frontend": "v20260822012339",
+  "browser": "v20260822012339",
+  "douyin-resolver": "v20260822012339"
+}
+```
+
+解析顺序是：环境变量覆盖 > `service-versions.json` > 旧的 `release-version`
+单版本 pin。因此只发后端时不会再顺手把前端/浏览器/resolver 拉回旧版本。
+
+```bash
+# 只发布后端，其它服务不动
+./bin/control app release backend v20261115010500
+
+# 镜像已经 docker load 到本机，不需要 registry pull
+./bin/control app release backend v20261115010500 --no-pull
+
+# 最后一个服务版本出问题时，回退到上一次的版本
+./bin/control app rollback backend
+```
+
+`app release` 会先确认镜像存在（本地没有且未加 `--no-pull` 时会 pull），
+原子写入 `service-versions.json`（旧文件保留为 `service-versions.previous.json`），
+再用 `docker compose up -d --no-deps <service>` 只重建这个服务，等待容器健康；
+健康检查失败会自动回退到上一版本。`app up`、`app down`、`status` 都会使用这份
+按服务的版本，不会再被单一的 `release-version` 覆盖。
+
+### 方法一：使用 `update` 命令 (四个镜像同版本的一套发布)
 
 ```bash
 # 使用同一版本更新全部应用镜像
@@ -242,7 +275,8 @@ streamer-minio      Up 2 hours (healthy)    0.0.0.0:7090-7091->7090-7091/tcp
 - 在当前应用保持在线时，用目标 backend 镜像执行数据库迁移
 - 迁移成功后重建应用容器
 - 等待 Backend 和 Frontend 健康；Browser 或 Douyin Resolver 异常时报告降级但不阻断其它平台
-- 仅在必要健康检查通过后原子更新 `~/.streamer-helper/release-version`
+- 仅在必要健康检查通过后原子更新 `~/.streamer-helper/release-version`，
+  并把四个服务的版本一起写进 `service-versions.json`（整套发布语义）
 
 后续普通的 `app down`、`app up`、`status` 和 `logs` 都会读取该 release pin。没有 pin 或 pin 损坏时，生产模式启动会明确失败，不会退回到 `latest`；Compose 应用文件本身也要求四个应用版本变量非空。请通过 `bin/control` 执行生产启停，其中停止命令不依赖 pin。更新失败时会保留更新前的运行状态：原来运行则保持或恢复原 pin 对应的应用，原来停止则清理可能创建的候选容器并保持停止。`update all` 会记住主动停止应用之前的状态并传递给同一恢复路径。
 
